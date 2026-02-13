@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build
+dist/
+.next/
+out/
+build/
+.turbo/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# ide
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# test
+coverage/
+
+# docker
+pgdata/
+redisdata/

@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build shared package
+        run: npx turbo build --filter=@mindscape/shared
+
+      - name: Build API
+        run: npx turbo build --filter=@mindscape/api
+
+      - name: Build Web
+        run: npx turbo build --filter=@mindscape/web
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck shared
+        run: npm run lint --workspace=@mindscape/shared
+
+      - name: Typecheck API
+        working-directory: apps/api
+        run: npx tsc --noEmit

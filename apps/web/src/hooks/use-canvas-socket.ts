@@ -7,7 +7,7 @@ import { useCanvasStore } from '@/stores/canvas-store';
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:3001';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:4000';
 
 /**
  * Hook that connects to the canvas WebSocket namespace and feeds

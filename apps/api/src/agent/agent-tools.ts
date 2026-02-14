@@ -79,6 +79,40 @@ export const CANVAS_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: 'create_edge',
+    description:
+      'Create a directed edge (connection) between two nodes. Use this to show relationships, flow, or dependencies between ideas.',
+    parameters: {
+      type: 'object',
+      required: ['sourceId', 'targetId'],
+      properties: {
+        sourceId: { type: 'string', description: 'UUID of the source node' },
+        targetId: { type: 'string', description: 'UUID of the target node' },
+        label: { type: 'string', description: 'Optional label for the edge (e.g. "leads to", "depends on")' },
+        style: {
+          type: 'object',
+          description: 'Visual style overrides for the edge',
+          properties: {
+            color: { type: 'string' },
+            strokeWidth: { type: 'number' },
+            dashed: { type: 'boolean' },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'delete_edge',
+    description: 'Remove an edge (connection) from the canvas.',
+    parameters: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id: { type: 'string', description: 'The UUID of the edge to delete' },
+      },
+    },
+  },
 ];
 
 /**

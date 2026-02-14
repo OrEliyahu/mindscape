@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NodesService } from '../nodes/nodes.service';
+import { EdgesService } from '../edges/edges.service';
 import { CanvasService } from '../canvas/canvas.service';
 import { AgentBroadcastService } from '../collaboration/agent-broadcast.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { toolsToOpenRouterFormat } from './agent-tools';
-import { toNodePayload } from '../common/mappers';
-import type { AgentInvokePayload, NodePayload } from '@mindscape/shared';
+import { toNodePayload, toEdgePayload } from '../common/mappers';
+import type { AgentInvokePayload, NodePayload, EdgePayload } from '@mindscape/shared';
 
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -33,17 +34,32 @@ interface LLMResponse {
 }
 
 const SYSTEM_PROMPT = `You are an AI agent working on a collaborative infinite canvas called Mindscape.
-You can create, update, and delete nodes on the canvas using the provided tools.
+You can create, update, and delete nodes AND edges on the canvas using the provided tools.
+Viewers are watching your work in real-time, so build the canvas thoughtfully.
 
-When creating nodes, space them out nicely (at least 250px apart) and use appropriate types:
-- sticky_note: for short ideas, reminders, brainstorming items
-- text_block: for longer explanations or documentation
-- code_block: for code snippets (set content.language)
-- ai_response: for your own analysis or responses
-- shape: for visual elements
+## Node types
+- sticky_note: short ideas, reminders, brainstorming items (default ~200×150)
+- text_block: longer explanations or documentation (~300×200)
+- code_block: code snippets — always set content.language (~350×250)
+- ai_response: your own analysis or responses (~300×200)
+- shape: visual elements like circles or rectangles (~150×150)
 
-Always provide meaningful text content. Be creative and helpful.
-Think step-by-step: first understand the user's request, then plan what nodes to create, then execute.`;
+## Layout guidelines
+- Space nodes at least 250px apart horizontally or vertically.
+- Arrange related nodes in a logical layout: left-to-right for sequences, top-to-bottom for hierarchies.
+- When a canvas already has nodes, place new nodes nearby but not overlapping. Check existing positions and find empty space.
+- Use the canvas coordinate system: positive X is right, positive Y is down.
+
+## Edges (connections)
+- Use create_edge to connect related nodes (e.g. "depends on", "leads to", "contains").
+- Always create edges AFTER the nodes they connect exist.
+- Add meaningful labels to edges to describe the relationship.
+
+## Workflow
+1. Read the canvas context to understand what already exists.
+2. Plan your layout — decide positions before creating nodes.
+3. Create nodes first, then connect them with edges.
+4. Keep content concise and meaningful.`;
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -61,6 +77,7 @@ export class AgentRunnerService {
   constructor(
     private readonly configService: ConfigService,
     private readonly nodesService: NodesService,
+    private readonly edgesService: EdgesService,
     private readonly canvasService: CanvasService,
     private readonly broadcast: AgentBroadcastService,
     private readonly sessions: AgentSessionRepository,
@@ -100,7 +117,7 @@ export class AgentRunnerService {
     model: string,
     payload: AgentInvokePayload,
   ) {
-    // Build initial context with existing canvas nodes (already camelCase)
+    // Build initial context with existing canvas state (already camelCase from service)
     const canvas = await this.canvasService.findOneWithNodes(canvasId);
     const existingNodes = (canvas.nodes as NodePayload[]).map((n) => ({
       id: n.id,
@@ -111,13 +128,37 @@ export class AgentRunnerService {
       height: n.height,
       content: n.content,
     }));
+    const existingEdges = (canvas.edges as EdgePayload[]).map((e) => ({
+      id: e.id,
+      sourceId: e.sourceId,
+      targetId: e.targetId,
+      label: e.label,
+    }));
+
+    // Compute bounding box so the agent knows where free space is
+    let spatialHint = 'The canvas is empty — start placing nodes near (0, 0).';
+    if (existingNodes.length > 0) {
+      const maxX = Math.max(...existingNodes.map((n) => n.positionX + (n.width ?? 200)));
+      const maxY = Math.max(...existingNodes.map((n) => n.positionY + (n.height ?? 200)));
+      const minX = Math.min(...existingNodes.map((n) => n.positionX));
+      const minY = Math.min(...existingNodes.map((n) => n.positionY));
+      spatialHint = `Occupied area: x ${minX}–${maxX}, y ${minY}–${maxY}. Place new nodes outside this area or find gaps.`;
+    }
+
+    const canvasContext = [
+      `Canvas: "${canvas.title}" (${canvasId})`,
+      spatialHint,
+      `Nodes (${existingNodes.length}):`,
+      JSON.stringify(existingNodes, null, 2),
+      `Edges (${existingEdges.length}):`,
+      existingEdges.length > 0 ? JSON.stringify(existingEdges, null, 2) : '(none)',
+      '',
+      `User request: ${payload.prompt}`,
+    ].join('\n');
 
     const messages: LLMMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: `Canvas currently has ${existingNodes.length} nodes:\n${JSON.stringify(existingNodes, null, 2)}\n\nUser request: ${payload.prompt}`,
-      },
+      { role: 'user', content: canvasContext },
     ];
 
     const tools = toolsToOpenRouterFormat();
@@ -228,6 +269,24 @@ export class AgentRunnerService {
           const id = args.id as string;
           await this.nodesService.remove(id);
           this.broadcast.broadcastNodeDeleted(canvasId, id);
+          return { success: true, deleted: id };
+        }
+
+        case 'create_edge': {
+          const edge = await this.edgesService.create(canvasId, {
+            sourceId: args.sourceId as string,
+            targetId: args.targetId as string,
+            label: args.label as string | undefined,
+            style: args.style as Record<string, unknown> | undefined,
+          });
+          this.broadcast.broadcastEdgeCreated(canvasId, toEdgePayload(edge));
+          return { success: true, edgeId: edge.id };
+        }
+
+        case 'delete_edge': {
+          const id = args.id as string;
+          await this.edgesService.remove(id);
+          this.broadcast.broadcastEdgeDeleted(canvasId, id);
           return { success: true, deleted: id };
         }
 

@@ -22,6 +22,7 @@ export interface AgentToolCall {
 export interface AgentInvokePayload {
   prompt: string;
   model: string;
+  agentType?: string;
   context?: {
     selectedNodeIds?: string[];
     viewport?: { x: number; y: number; width: number; height: number; zoom: number };

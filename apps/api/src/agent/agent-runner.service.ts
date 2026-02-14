@@ -76,7 +76,7 @@ export class AgentRunnerService {
    * Progress is streamed to viewers via AgentBroadcastService.
    */
   async invoke(canvasId: string, payload: AgentInvokePayload): Promise<{ sessionId: string }> {
-    const model = payload.model || 'anthropic/claude-sonnet-4';
+    const model = payload.model || 'google/gemini-2.0-flash-001';
 
     // 1. Create session
     const session = await this.sessions.create(canvasId, 'canvas-agent', model);
@@ -208,7 +208,7 @@ export class AgentRunnerService {
             height: args.height as number | undefined,
             content: args.content as Record<string, unknown> | undefined,
             style: args.style as Record<string, unknown> | undefined,
-            createdBy: sessionId,
+            createdBy: undefined, // agents aren't users — skip FK
           });
           this.broadcast.broadcastNodeCreated(canvasId, this.toNodePayload(node));
           return { success: true, nodeId: node.id };
@@ -256,7 +256,7 @@ export class AgentRunnerService {
         messages,
         tools,
         tool_choice: 'auto',
-        max_tokens: 4096,
+        max_tokens: 2048,
       }),
     });
 

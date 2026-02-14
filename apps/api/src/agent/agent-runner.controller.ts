@@ -2,6 +2,7 @@ import { Controller, Post, Get, Param, Body, UseGuards } from '@nestjs/common';
 import { AgentRunnerService } from './agent-runner.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { InternalApiGuard } from './internal-api.guard';
+import { listPersonas } from './agent-registry';
 import type { AgentInvokePayload } from '@mindscape/shared';
 
 /**
@@ -29,6 +30,14 @@ export class AgentRunnerController {
     @Body() body: AgentInvokePayload,
   ) {
     return this.runner.invoke(canvasId, body);
+  }
+
+  /** List available agent personas (public / viewer-accessible) */
+  @Get('personas')
+  listPersonas() {
+    return listPersonas().map(({ key, name, emoji, color, description }) => ({
+      key, name, emoji, color, description,
+    }));
   }
 
   /** List all agent sessions for a canvas (public / viewer-accessible) */

@@ -6,6 +6,7 @@ import { CanvasService } from '../canvas/canvas.service';
 import { AgentBroadcastService } from '../collaboration/agent-broadcast.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { toolsToOpenRouterFormat } from './agent-tools';
+import { buildSystemPrompt, getPersona, DEFAULT_PERSONA_KEY } from './agent-registry';
 import { toNodePayload, toEdgePayload } from '../common/mappers';
 import type { AgentInvokePayload, NodePayload, EdgePayload } from '@mindscape/shared';
 
@@ -33,46 +34,24 @@ interface LLMResponse {
   }>;
 }
 
-const SYSTEM_PROMPT = `You are an AI agent working on a collaborative infinite canvas called Mindscape.
-You can create, update, and delete nodes AND edges on the canvas using the provided tools.
-Viewers are watching your work in real-time, so build the canvas thoughtfully.
-
-## Node types
-- sticky_note: short ideas, reminders, brainstorming items (default ~200×150)
-- text_block: longer explanations or documentation (~300×200)
-- code_block: code snippets — always set content.language (~350×250)
-- ai_response: your own analysis or responses (~300×200)
-- shape: visual elements like circles or rectangles (~150×150)
-
-## Layout guidelines
-- Space nodes at least 250px apart horizontally or vertically.
-- Arrange related nodes in a logical layout: left-to-right for sequences, top-to-bottom for hierarchies.
-- When a canvas already has nodes, place new nodes nearby but not overlapping. Check existing positions and find empty space.
-- Use the canvas coordinate system: positive X is right, positive Y is down.
-
-## Edges (connections)
-- Use create_edge to connect related nodes (e.g. "depends on", "leads to", "contains").
-- Always create edges AFTER the nodes they connect exist.
-- Add meaningful labels to edges to describe the relationship.
-
-## Workflow
-1. Read the canvas context to understand what already exists.
-2. Plan your layout — decide positions before creating nodes.
-3. Create nodes first, then connect them with edges.
-4. Keep content concise and meaningful.`;
-
 const MAX_TOOL_ROUNDS = 10;
+const MAX_CONCURRENT_SESSIONS_PER_CANVAS = 3;
+const TOOL_RATE_LIMIT_MS = 500; // minimum ms between tool executions
 
 /**
  * Executes an AI agent on a canvas.
  *
  * Flow: receive prompt → call LLM → execute tool calls → broadcast to viewers → repeat until done.
+ * Supports multiple agent personas and concurrent sessions per canvas.
  */
 @Injectable()
 export class AgentRunnerService {
   private readonly logger = new Logger(AgentRunnerService.name);
   private readonly apiKey: string;
   private readonly apiUrl: string;
+
+  /** Track active sessions per canvas for concurrency limiting. */
+  private readonly activeSessions = new Map<string, Set<string>>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -93,30 +72,64 @@ export class AgentRunnerService {
    * Invoke an agent on a canvas. Runs in the background (fire-and-forget).
    * Progress is streamed to viewers via AgentBroadcastService.
    */
-  async invoke(canvasId: string, payload: AgentInvokePayload): Promise<{ sessionId: string }> {
+  async invoke(canvasId: string, payload: AgentInvokePayload): Promise<{ sessionId: string; agentType: string }> {
     const model = payload.model || 'google/gemini-2.0-flash-001';
+    const agentType = payload.agentType || DEFAULT_PERSONA_KEY;
+    const persona = getPersona(agentType);
 
-    // 1. Create session
-    const session = await this.sessions.create(canvasId, 'canvas-agent', model);
+    // Check concurrent session limit
+    const active = this.activeSessions.get(canvasId);
+    if (active && active.size >= MAX_CONCURRENT_SESSIONS_PER_CANVAS) {
+      throw new Error(
+        `Canvas already has ${active.size} active agent sessions (max ${MAX_CONCURRENT_SESSIONS_PER_CANVAS}). Wait for one to finish.`,
+      );
+    }
+
+    // Create session with persona name
+    const session = await this.sessions.create(canvasId, persona.key, model);
+
+    // Track active session
+    if (!this.activeSessions.has(canvasId)) {
+      this.activeSessions.set(canvasId, new Set());
+    }
+    this.activeSessions.get(canvasId)!.add(session.id);
+
     this.broadcast.broadcastAgentStatus(canvasId, session.id, 'thinking');
-    this.logger.log(`Agent session ${session.id} started on canvas ${canvasId}`);
+    this.logger.log(`Agent session ${session.id} (${persona.name}) started on canvas ${canvasId}`);
 
-    // 2. Run agent loop in background (don't await)
-    this.runAgentLoop(canvasId, session.id, model, payload).catch((err) => {
-      this.logger.error(`Agent session ${session.id} failed: ${err.message}`);
-      this.sessions.updateStatus(session.id, 'error');
-      this.broadcast.broadcastAgentError(canvasId, session.id, err.message);
-    });
+    // Run agent loop in background (don't await)
+    this.runAgentLoop(canvasId, session.id, model, agentType, payload)
+      .catch((err) => {
+        this.logger.error(`Agent session ${session.id} failed: ${err.message}`);
+        this.sessions.updateStatus(session.id, 'error');
+        this.broadcast.broadcastAgentError(canvasId, session.id, err.message);
+      })
+      .finally(() => {
+        // Clean up active session tracking
+        const set = this.activeSessions.get(canvasId);
+        if (set) {
+          set.delete(session.id);
+          if (set.size === 0) this.activeSessions.delete(canvasId);
+        }
+      });
 
-    return { sessionId: session.id };
+    return { sessionId: session.id, agentType: persona.key };
+  }
+
+  /** Get count of active sessions on a canvas. */
+  getActiveSessionCount(canvasId: string): number {
+    return this.activeSessions.get(canvasId)?.size ?? 0;
   }
 
   private async runAgentLoop(
     canvasId: string,
     sessionId: string,
     model: string,
+    agentType: string,
     payload: AgentInvokePayload,
   ) {
+    const persona = getPersona(agentType);
+
     // Build initial context with existing canvas state (already camelCase from service)
     const canvas = await this.canvasService.findOneWithNodes(canvasId);
     const existingNodes = (canvas.nodes as NodePayload[]).map((n) => ({
@@ -145,9 +158,16 @@ export class AgentRunnerService {
       spatialHint = `Occupied area: x ${minX}–${maxX}, y ${minY}–${maxY}. Place new nodes outside this area or find gaps.`;
     }
 
+    // Note other active agents on this canvas
+    const otherActiveCount = (this.activeSessions.get(canvasId)?.size ?? 1) - 1;
+    const multiAgentHint = otherActiveCount > 0
+      ? `\nNote: ${otherActiveCount} other agent(s) are also working on this canvas right now. Avoid placing nodes where they might be working.`
+      : '';
+
     const canvasContext = [
       `Canvas: "${canvas.title}" (${canvasId})`,
-      spatialHint,
+      `You are: ${persona.emoji} ${persona.name}`,
+      spatialHint + multiAgentHint,
       `Nodes (${existingNodes.length}):`,
       JSON.stringify(existingNodes, null, 2),
       `Edges (${existingEdges.length}):`,
@@ -156,12 +176,14 @@ export class AgentRunnerService {
       `User request: ${payload.prompt}`,
     ].join('\n');
 
+    const systemPrompt = buildSystemPrompt(agentType);
     const messages: LLMMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: canvasContext },
     ];
 
     const tools = toolsToOpenRouterFormat();
+    let lastToolTime = 0;
 
     // Agent loop: call LLM → execute tools → repeat
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -210,13 +232,31 @@ export class AgentRunnerService {
           continue;
         }
 
+        // Rate limiting: wait if executing tools too fast
+        const now = Date.now();
+        const elapsed = now - lastToolTime;
+        if (elapsed < TOOL_RATE_LIMIT_MS) {
+          await this.sleep(TOOL_RATE_LIMIT_MS - elapsed);
+        }
+
         const result = await this.executeTool(canvasId, sessionId, name, args);
+        lastToolTime = Date.now();
 
         // Record tool call in DB
         await this.sessions.appendToolCall(sessionId, { tool: name, args, result });
 
         // Broadcast tool call to viewers
         this.broadcast.broadcastAgentToolCall(canvasId, sessionId, name, args, result);
+
+        // Broadcast cursor position when creating/updating nodes
+        if ((name === 'create_node' || name === 'update_node') && args.positionX != null && args.positionY != null) {
+          this.broadcast.broadcastAgentCursor(
+            canvasId,
+            sessionId,
+            args.positionX as number,
+            args.positionY as number,
+          );
+        }
 
         // Append tool result for next LLM round
         messages.push({
@@ -230,7 +270,7 @@ export class AgentRunnerService {
     // Done
     await this.sessions.updateStatus(sessionId, 'idle');
     this.broadcast.broadcastAgentStatus(canvasId, sessionId, 'idle');
-    this.logger.log(`Agent session ${sessionId} completed`);
+    this.logger.log(`Agent session ${sessionId} (${persona.name}) completed`);
   }
 
   private async executeTool(
@@ -328,4 +368,7 @@ export class AgentRunnerService {
     return response.json() as Promise<LLMResponse>;
   }
 
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 }

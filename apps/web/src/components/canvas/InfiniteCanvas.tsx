@@ -6,11 +6,18 @@ import type Konva from 'konva';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { useCanvasSocket } from '@/hooks/use-canvas-socket';
 import ActivityFeed from './ActivityFeed';
-import type { NodePayload, EdgePayload } from '@mindscape/shared';
+import type { NodePayload, EdgePayload, AgentStatus } from '@mindscape/shared';
+import {
+  getAgentPersonas,
+  getAgentSessions,
+  type AgentPersona,
+  type AgentSessionSummary,
+} from '@/lib/agent-persona-client';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const CURSOR_FADE_MS = 3000;
 
 /* ─── Node type → colour mapping ──────────────────── */
 const NODE_COLORS: Record<string, string> = {
@@ -135,12 +142,18 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const connected = useCanvasStore((s) => s.connected);
   const viewport = useCanvasStore((s) => s.viewport);
   const setViewport = useCanvasStore((s) => s.setViewport);
+  const agentCursors = useCanvasStore((s) => s.agentCursors);
+  const pruneStaleAgentCursors = useCanvasStore((s) => s.pruneStaleAgentCursors);
+  const agentActivity = useCanvasStore((s) => s.agentActivity);
 
   const nodeArray = useMemo(() => Array.from(nodes.values()), [nodes]);
   const edgeArray = useMemo(() => Array.from(edges.values()), [edges]);
   const agentCount = useMemo(() => presence.filter((u) => u.isAgent).length, [presence]);
   const viewerCount = useMemo(() => presence.filter((u) => !u.isAgent).length, [presence]);
   const [canvasTitle, setCanvasTitle] = useState<string>('Canvas');
+  const [personas, setPersonas] = useState<AgentPersona[]>([]);
+  const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
+  const [tick, setTick] = useState(0);
 
   /* ── window resize ────────────────────────────── */
   const [stageSize, setStageSize] = useState({ width: 1200, height: 800 });
@@ -151,6 +164,44 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPersonas = async () => {
+      try {
+        const next = await getAgentPersonas(canvasId);
+        if (!cancelled) setPersonas(next);
+      } catch {
+        if (!cancelled) setPersonas([]);
+      }
+    };
+
+    const loadSessions = async () => {
+      try {
+        const next = await getAgentSessions(canvasId);
+        if (!cancelled) setSessions(next);
+      } catch {
+        if (!cancelled) setSessions([]);
+      }
+    };
+
+    loadPersonas();
+    loadSessions();
+    const sessionInterval = window.setInterval(loadSessions, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(sessionInterval);
+    };
+  }, [canvasId]);
+
+  useEffect(() => {
+    const ticker = window.setInterval(() => {
+      setTick((v) => v + 1);
+      pruneStaleAgentCursors(CURSOR_FADE_MS);
+    }, 500);
+    return () => window.clearInterval(ticker);
+  }, [pruneStaleAgentCursors]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,6 +288,74 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
     });
   }, [nodeArray, resetView, setViewport, stageSize.height, stageSize.width]);
 
+  const personasByKey = useMemo(() => {
+    const map = new Map<string, AgentPersona>();
+    for (const persona of personas) {
+      map.set(persona.key, persona);
+    }
+    return map;
+  }, [personas]);
+
+  const sessionById = useMemo(() => {
+    const map = new Map<string, AgentSessionSummary>();
+    for (const session of sessions) {
+      map.set(session.id, session);
+    }
+    return map;
+  }, [sessions]);
+
+  const latestStatusBySessionId = useMemo(() => {
+    const map = new Map<string, AgentStatus>();
+    for (const entry of agentActivity) {
+      if (entry.type === 'status') {
+        map.set(entry.sessionId, String(entry.data) as AgentStatus);
+      }
+    }
+    return map;
+  }, [agentActivity]);
+
+  const activePersonaBadges = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const session of sessions) {
+      const status = latestStatusBySessionId.get(session.id) ?? session.status;
+      if (status === 'thinking' || status === 'acting') {
+        counts.set(session.agentName, (counts.get(session.agentName) ?? 0) + 1);
+      }
+    }
+
+    return Array.from(counts.entries()).map(([agentKey, count]) => {
+      const persona = personasByKey.get(agentKey);
+      return {
+        key: agentKey,
+        count,
+        emoji: persona?.emoji ?? '🤖',
+        name: persona?.name ?? agentKey,
+        color: persona?.color ?? '#64748b',
+      };
+    });
+  }, [latestStatusBySessionId, personasByKey, sessions]);
+
+  const renderedCursors = useMemo(() => {
+    const now = Date.now();
+    return Array.from(agentCursors.values())
+      .map((cursor) => {
+        const age = now - cursor.timestamp;
+        if (age > CURSOR_FADE_MS) return null;
+        const opacity = Math.max(0.18, 1 - age / CURSOR_FADE_MS);
+        const session = sessionById.get(cursor.sessionId);
+        const persona = session ? personasByKey.get(session.agentName) : undefined;
+        return {
+          ...cursor,
+          opacity,
+          emoji: persona?.emoji ?? '🤖',
+          label: persona?.name ?? session?.agentName ?? 'Agent',
+          color: persona?.color ?? '#64748b',
+        };
+      })
+      .filter((value): value is NonNullable<typeof value> => value !== null);
+  }, [agentCursors, personasByKey, sessionById, tick]);
+
   return (
     <div
       style={{
@@ -287,6 +406,50 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
           {nodeArray.length} node{nodeArray.length !== 1 ? 's' : ''}
         </span>
       </div>
+      {activePersonaBadges.length > 0 ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: 62,
+            left: 16,
+            zIndex: 10,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            maxWidth: 'min(70vw, 680px)',
+          }}
+        >
+          {activePersonaBadges.map((persona) => (
+            <div
+              key={persona.key}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                borderRadius: 999,
+                padding: '0.2rem 0.5rem',
+                border: `1px solid ${persona.color}66`,
+                background: 'rgba(255,255,255,0.9)',
+                color: '#334155',
+                fontSize: '0.75rem',
+              }}
+            >
+              <span>{persona.emoji}</span>
+              <span>{persona.name}</span>
+              {persona.count > 1 ? (
+                <span
+                  style={{
+                    fontSize: '0.68rem',
+                    color: '#64748b',
+                  }}
+                >
+                  x{persona.count}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -334,7 +497,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
         <div
           style={{
             position: 'absolute',
-            top: 66,
+            top: activePersonaBadges.length > 0 ? 102 : 66,
             left: 16,
             zIndex: 10,
             background: '#fef2f2',
@@ -413,21 +576,28 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
 
         {/* Agent cursors layer */}
         <Layer>
-          {presence
-            .filter((u) => u.isAgent && u.cursorX !== 0 && u.cursorY !== 0)
-            .map((agent) => (
-              <Group key={agent.id} x={agent.cursorX} y={agent.cursorY}>
-                <Circle radius={6} fill={agent.color} opacity={0.8} />
-                <Text
-                  x={10}
-                  y={-6}
-                  text={agent.name}
-                  fontSize={11}
-                  fill={agent.color}
-                  fontStyle="bold"
-                />
-              </Group>
-            ))}
+          {renderedCursors.map((cursor) => (
+            <Group key={cursor.sessionId} x={cursor.x} y={cursor.y} opacity={cursor.opacity}>
+              <Circle radius={7} fill={cursor.color} shadowBlur={6} shadowColor={cursor.color} />
+              <Rect
+                x={11}
+                y={-12}
+                height={20}
+                width={Math.max(66, cursor.label.length * 7 + 24)}
+                cornerRadius={10}
+                fill="rgba(15,23,42,0.85)"
+              />
+              <Text
+                x={16}
+                y={-9}
+                text={`${cursor.emoji} ${cursor.label}`}
+                fontSize={11}
+                fill="#f8fafc"
+                fontStyle="bold"
+              />
+              <Circle radius={2.5} fill="#f8fafc" />
+            </Group>
+          ))}
         </Layer>
       </Stage>
 
@@ -450,7 +620,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       </div>
 
       {/* ── Activity feed (viewer-only, no actions) ── */}
-      <ActivityFeed />
+      <ActivityFeed canvasId={canvasId} />
     </div>
   );
 }

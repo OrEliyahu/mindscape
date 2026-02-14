@@ -28,6 +28,7 @@ export function useCanvasSocket(canvasId: string) {
   const removeEdge = useCanvasStore((s) => s.removeEdge);
   const setPresence = useCanvasStore((s) => s.setPresence);
   const pushAgentActivity = useCanvasStore((s) => s.pushAgentActivity);
+  const upsertAgentCursor = useCanvasStore((s) => s.upsertAgentCursor);
 
   useEffect(() => {
     const socket: TypedSocket = io(`${WS_URL}/canvas`, {
@@ -80,6 +81,9 @@ export function useCanvasSocket(canvasId: string) {
     socket.on('agent:error', (data) =>
       pushAgentActivity({ sessionId: data.sessionId, type: 'error', data: data.error, timestamp: Date.now() }),
     );
+    socket.on('agent:cursor', (data) =>
+      upsertAgentCursor({ sessionId: data.sessionId, x: data.x, y: data.y, timestamp: Date.now() }),
+    );
 
     /* ── cleanup ─────────────────────────────────── */
     return () => {
@@ -99,6 +103,7 @@ export function useCanvasSocket(canvasId: string) {
     removeEdge,
     setPresence,
     pushAgentActivity,
+    upsertAgentCursor,
   ]);
 
   return socketRef;

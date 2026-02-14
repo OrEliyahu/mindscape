@@ -9,6 +9,13 @@ export interface AgentActivity {
   timestamp: number;
 }
 
+export interface AgentCursor {
+  sessionId: string;
+  x: number;
+  y: number;
+  timestamp: number;
+}
+
 /* ─── Store shape ────────────────────────────────────── */
 interface CanvasState {
   /* canvas data */
@@ -16,6 +23,7 @@ interface CanvasState {
   edges: Map<string, EdgePayload>;
   presence: PresenceUser[];
   agentActivity: AgentActivity[];
+  agentCursors: Map<string, AgentCursor>;
 
   /* connection */
   connected: boolean;
@@ -43,6 +51,8 @@ interface CanvasState {
   /** Agent activity feed */
   pushAgentActivity: (entry: AgentActivity) => void;
   clearAgentActivity: () => void;
+  upsertAgentCursor: (cursor: AgentCursor) => void;
+  pruneStaleAgentCursors: (maxAgeMs: number) => void;
 
   /** Connection */
   setConnected: (v: boolean) => void;
@@ -56,6 +66,7 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   edges: new Map(),
   presence: [],
   agentActivity: [],
+  agentCursors: new Map(),
   connected: false,
   viewport: { x: 0, y: 0, zoom: 1 },
 
@@ -114,6 +125,23 @@ export const useCanvasStore = create<CanvasState>((set) => ({
       agentActivity: [...s.agentActivity.slice(-99), entry],
     })),
   clearAgentActivity: () => set({ agentActivity: [] }),
+  upsertAgentCursor: (cursor) =>
+    set((s) => {
+      const next = new Map(s.agentCursors);
+      next.set(cursor.sessionId, cursor);
+      return { agentCursors: next };
+    }),
+  pruneStaleAgentCursors: (maxAgeMs) =>
+    set((s) => {
+      const cutoff = Date.now() - maxAgeMs;
+      const next = new Map(s.agentCursors);
+      for (const [sessionId, cursor] of next) {
+        if (cursor.timestamp < cutoff) {
+          next.delete(sessionId);
+        }
+      }
+      return { agentCursors: next };
+    }),
 
   /* ─── connection ─────────────────────────────────── */
   setConnected: (connected) => set({ connected }),

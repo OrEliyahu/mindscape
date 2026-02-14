@@ -5,6 +5,7 @@ import { Stage, Layer, Rect, Text, Group, Circle, Line } from 'react-konva';
 import type Konva from 'konva';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { useCanvasSocket } from '@/hooks/use-canvas-socket';
+import ActivityFeed from './ActivityFeed';
 import type { NodePayload, EdgePayload } from '@mindscape/shared';
 
 const MIN_ZOOM = 0.1;
@@ -268,6 +269,9 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
             ))}
         </Layer>
       </Stage>
+
+      {/* ── Activity feed (viewer-only, no actions) ── */}
+      <ActivityFeed />
     </div>
   );
 }

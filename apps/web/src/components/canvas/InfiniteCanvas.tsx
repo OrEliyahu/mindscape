@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback, useMemo } from 'react';
+import { useRef, useCallback, useMemo, useState, useEffect } from 'react';
 import { Stage, Layer, Rect, Text, Group, Circle, Line } from 'react-konva';
 import type Konva from 'konva';
 import { useCanvasStore } from '@/stores/canvas-store';
@@ -110,6 +110,16 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const nodeArray = useMemo(() => Array.from(nodes.values()), [nodes]);
   const edgeArray = useMemo(() => Array.from(edges.values()), [edges]);
 
+  /* ── window resize ────────────────────────────── */
+  const [stageSize, setStageSize] = useState({ width: 1200, height: 800 });
+
+  useEffect(() => {
+    const updateSize = () => setStageSize({ width: window.innerWidth, height: window.innerHeight });
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
   /* ── zoom ──────────────────────────────────────── */
   const handleWheel = useCallback(
     (e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -197,8 +207,8 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       {/* ── Konva stage ─────────────────────────── */}
       <Stage
         ref={stageRef}
-        width={typeof window !== 'undefined' ? window.innerWidth : 1200}
-        height={typeof window !== 'undefined' ? window.innerHeight : 800}
+        width={stageSize.width}
+        height={stageSize.height}
         x={viewport.x}
         y={viewport.y}
         scaleX={viewport.zoom}

@@ -5,6 +5,7 @@ import { CanvasService } from '../canvas/canvas.service';
 import { AgentBroadcastService } from '../collaboration/agent-broadcast.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { toolsToOpenRouterFormat } from './agent-tools';
+import { toNodePayload } from '../common/mappers';
 import type { AgentInvokePayload, NodePayload } from '@mindscape/shared';
 
 interface LLMMessage {
@@ -99,13 +100,13 @@ export class AgentRunnerService {
     model: string,
     payload: AgentInvokePayload,
   ) {
-    // Build initial context with existing canvas nodes
+    // Build initial context with existing canvas nodes (already camelCase)
     const canvas = await this.canvasService.findOneWithNodes(canvasId);
-    const existingNodes = (canvas.nodes as Record<string, unknown>[]).map((n) => ({
+    const existingNodes = (canvas.nodes as NodePayload[]).map((n) => ({
       id: n.id,
       type: n.type,
-      positionX: n.position_x,
-      positionY: n.position_y,
+      positionX: n.positionX,
+      positionY: n.positionY,
       width: n.width,
       height: n.height,
       content: n.content,
@@ -210,7 +211,7 @@ export class AgentRunnerService {
             style: args.style as Record<string, unknown> | undefined,
             createdBy: undefined, // agents aren't users — skip FK
           });
-          this.broadcast.broadcastNodeCreated(canvasId, this.toNodePayload(node));
+          this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
           return { success: true, nodeId: node.id };
         }
 
@@ -268,24 +269,4 @@ export class AgentRunnerService {
     return response.json() as Promise<LLMResponse>;
   }
 
-  /** Map raw DB row (snake_case) to NodePayload (camelCase) */
-  private toNodePayload(row: Record<string, unknown>): NodePayload {
-    return {
-      id: row.id as string,
-      canvasId: row.canvas_id as string,
-      type: row.type as NodePayload['type'],
-      positionX: row.position_x as number,
-      positionY: row.position_y as number,
-      width: row.width as number,
-      height: row.height as number,
-      rotation: (row.rotation as number) ?? 0,
-      zIndex: row.z_index as number,
-      content: row.content as Record<string, unknown>,
-      style: row.style as Record<string, unknown>,
-      locked: (row.locked as boolean) ?? false,
-      createdBy: (row.created_by as string) ?? null,
-      createdAt: row.created_at as string,
-      updatedAt: row.updated_at as string,
-    };
-  }
 }

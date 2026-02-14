@@ -21,7 +21,7 @@ async function get<T>(path: string): Promise<T> {
 /* ── Canvas (read-only) ───────────────────────── */
 
 export function getCanvases() {
-  return get<{ id: string; title: string; created_at: string; updated_at: string }[]>(
+  return get<{ id: string; title: string; createdAt: string; updatedAt: string }[]>(
     `/canvases`,
   );
 }

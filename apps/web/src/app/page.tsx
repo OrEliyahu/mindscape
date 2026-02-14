@@ -5,8 +5,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 interface CanvasSummary {
   id: string;
   title: string;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 async function fetchCanvases(): Promise<CanvasSummary[]> {
@@ -91,7 +91,7 @@ export default async function HomePage() {
                 {c.title}
               </h2>
               <p style={{ fontSize: '0.8rem', color: '#aaa', margin: 0 }}>
-                Updated {new Date(c.updated_at).toLocaleString()}
+                Updated {new Date(c.updatedAt).toLocaleString()}
               </p>
             </Link>
           ))}

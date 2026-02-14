@@ -23,39 +23,6 @@ import type {
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
-/* ── DB row → camelCase payload mappers ────────────── */
-function toNodePayload(row: Record<string, unknown>): NodePayload {
-  return {
-    id: row.id as string,
-    canvasId: row.canvas_id as string,
-    type: row.type as NodePayload['type'],
-    positionX: row.position_x as number,
-    positionY: row.position_y as number,
-    width: row.width as number,
-    height: row.height as number,
-    rotation: (row.rotation as number) ?? 0,
-    zIndex: row.z_index as number,
-    content: row.content as Record<string, unknown>,
-    style: row.style as Record<string, unknown>,
-    locked: (row.locked as boolean) ?? false,
-    createdBy: (row.created_by as string) ?? null,
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-  };
-}
-
-function toEdgePayload(row: Record<string, unknown>): EdgePayload {
-  return {
-    id: row.id as string,
-    canvasId: row.canvas_id as string,
-    sourceId: row.source_id as string,
-    targetId: row.target_id as string,
-    label: (row.label as string) ?? null,
-    style: (row.style as Record<string, unknown>) ?? {},
-    createdAt: row.created_at as string,
-  };
-}
-
 /**
  * WebSocket gateway for real-time canvas viewing.
  *
@@ -120,10 +87,11 @@ export class CollaborationGateway implements OnGatewayInit, OnGatewayConnection,
     const users = this.presenceService.addViewer(canvasId, client.id, userId, name);
 
     // Send current canvas state to the newly-joined viewer
+    // findOneWithNodes already returns mapped camelCase payloads
     const canvas = await this.canvasService.findOneWithNodes(canvasId);
     client.emit('canvas:state', {
-      nodes: (canvas.nodes as Record<string, unknown>[]).map(toNodePayload),
-      edges: (canvas.edges as Record<string, unknown>[]).map(toEdgePayload),
+      nodes: canvas.nodes as NodePayload[],
+      edges: canvas.edges as EdgePayload[],
     });
 
     // Notify everyone in the room about updated viewer list

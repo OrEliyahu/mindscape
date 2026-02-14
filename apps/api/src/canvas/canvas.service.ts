@@ -1,6 +1,7 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.provider';
+import { toCanvasPayload, toNodePayload, toEdgePayload } from '../common/mappers';
 
 @Injectable()
 export class CanvasService {
@@ -10,7 +11,7 @@ export class CanvasService {
     const { rows } = await this.pg.query(
       `SELECT id, title, owner_id, created_at, updated_at FROM canvases ORDER BY updated_at DESC`,
     );
-    return rows;
+    return rows.map(toCanvasPayload);
   }
 
   async create(title?: string, ownerId?: string) {
@@ -38,7 +39,11 @@ export class CanvasService {
       [id],
     );
 
-    return { ...canvases[0], nodes, edges };
+    return {
+      ...toCanvasPayload(canvases[0]),
+      nodes: nodes.map(toNodePayload),
+      edges: edges.map(toEdgePayload),
+    };
   }
 
   async update(id: string, patch: { title?: string; settings?: Record<string, unknown> }) {

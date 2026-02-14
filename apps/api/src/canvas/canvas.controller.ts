@@ -5,6 +5,11 @@ import { CanvasService } from './canvas.service';
 export class CanvasController {
   constructor(private readonly canvasService: CanvasService) {}
 
+  @Get()
+  findAll() {
+    return this.canvasService.findAll();
+  }
+
   @Post()
   create(@Body() body: { title?: string; ownerId?: string }) {
     return this.canvasService.create(body.title, body.ownerId);

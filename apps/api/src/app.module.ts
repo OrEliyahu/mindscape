@@ -9,7 +9,10 @@ import { AgentModule } from './agent/agent.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env', '../../.env'],
+    }),
     DatabaseModule,
     RedisModule,
     CanvasModule,

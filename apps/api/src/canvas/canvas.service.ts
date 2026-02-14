@@ -6,6 +6,13 @@ import { PG_POOL } from '../database/database.provider';
 export class CanvasService {
   constructor(@Inject(PG_POOL) private readonly pg: Pool) {}
 
+  async findAll() {
+    const { rows } = await this.pg.query(
+      `SELECT id, title, owner_id, created_at, updated_at FROM canvases ORDER BY updated_at DESC`,
+    );
+    return rows;
+  }
+
   async create(title?: string, ownerId?: string) {
     const { rows } = await this.pg.query(
       `INSERT INTO canvases (title, owner_id) VALUES ($1, $2) RETURNING *`,

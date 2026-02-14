@@ -20,6 +20,12 @@ async function get<T>(path: string): Promise<T> {
 
 /* ── Canvas (read-only) ───────────────────────── */
 
+export function getCanvases() {
+  return get<{ id: string; title: string; created_at: string; updated_at: string }[]>(
+    `/canvases`,
+  );
+}
+
 export function getCanvas(id: string) {
   return get<{ id: string; title: string; nodes: unknown[]; edges: unknown[] }>(
     `/canvases/${id}`,

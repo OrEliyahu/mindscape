@@ -1,23 +1,21 @@
-import { Inject, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import {
   WebSocketGateway,
   WebSocketServer,
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../redis/redis.provider';
 import { CanvasService } from '../canvas/canvas.service';
-import { NodesService } from '../nodes/nodes.service';
 import { PresenceService } from './presence.service';
+import { AgentBroadcastService } from './agent-broadcast.service';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
-  CreateNodePayload,
   NodePayload,
   EdgePayload,
 } from '@mindscape/shared';
@@ -25,8 +23,14 @@ import type {
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
-const CURSOR_CHANNEL = 'mindscape:cursors';
-
+/**
+ * WebSocket gateway for real-time canvas viewing.
+ *
+ * **Architecture note**: Clients are read-only viewers. They connect,
+ * join a canvas room, and receive live updates. All canvas mutations
+ * (node create / update / delete) originate from backend agents and
+ * are broadcast through the {@link AgentBroadcastService}.
+ */
 @WebSocketGateway({
   namespace: '/canvas',
   cors: {
@@ -34,49 +38,40 @@ const CURSOR_CHANNEL = 'mindscape:cursors';
     credentials: true,
   },
 })
-export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class CollaborationGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: TypedServer;
 
   private readonly logger = new Logger(CollaborationGateway.name);
-  private subscriber: Redis;
 
   constructor(
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly canvasService: CanvasService,
-    private readonly nodesService: NodesService,
     private readonly presenceService: PresenceService,
-  ) {
-    this.subscriber = this.redis.duplicate();
-    this.initRedisSub();
+    private readonly agentBroadcast: AgentBroadcastService,
+  ) {}
+
+  afterInit(server: TypedServer) {
+    // Hand the live server reference to AgentBroadcastService so
+    // backend agents can emit events without coupling to Socket.IO.
+    this.agentBroadcast.setServer(server);
+    this.logger.log('WebSocket gateway initialised – AgentBroadcastService ready');
   }
 
-  private initRedisSub() {
-    this.subscriber.subscribe(CURSOR_CHANNEL);
-    this.subscriber.on('message', (_channel: string, message: string) => {
-      const data = JSON.parse(message) as {
-        canvasId: string;
-        excludeSocketId: string;
-        payload: { userId: string; x: number; y: number; name: string; color: string };
-      };
-      this.server
-        .to(data.canvasId)
-        .except(data.excludeSocketId)
-        .emit('cursor:moved', data.payload);
-    });
-  }
+  /* ──────────────────── connection lifecycle ──────────────── */
 
   handleConnection(client: TypedSocket) {
-    this.logger.log(`Client connected: ${client.id}`);
+    this.logger.log(`Viewer connected: ${client.id}`);
   }
 
   handleDisconnect(client: TypedSocket) {
-    this.logger.log(`Client disconnected: ${client.id}`);
-    const result = this.presenceService.removeUser(client.id);
+    this.logger.log(`Viewer disconnected: ${client.id}`);
+    const result = this.presenceService.removeViewer(client.id);
     if (result) {
       this.server.to(result.canvasId).emit('presence:update', { users: result.users });
     }
   }
+
+  /* ──────────────────── client events (read-only) ─────────── */
 
   @SubscribeMessage('join-canvas')
   async handleJoinCanvas(
@@ -84,21 +79,21 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     @MessageBody() data: { canvasId: string },
   ) {
     const { canvasId } = data;
-
     await client.join(canvasId);
 
     const userId = (client.handshake.auth as Record<string, string>).userId ?? client.id;
-    const name = (client.handshake.auth as Record<string, string>).name ?? 'Anonymous';
+    const name = (client.handshake.auth as Record<string, string>).name ?? 'Viewer';
 
-    const users = this.presenceService.addUser(canvasId, client.id, userId, name);
+    const users = this.presenceService.addViewer(canvasId, client.id, userId, name);
 
+    // Send current canvas state to the newly-joined viewer
     const canvas = await this.canvasService.findOneWithNodes(canvasId);
-
     client.emit('canvas:state', {
       nodes: canvas.nodes as NodePayload[],
       edges: canvas.edges as EdgePayload[],
     });
 
+    // Notify everyone in the room about updated viewer list
     this.server.to(canvasId).emit('presence:update', { users });
   }
 
@@ -108,89 +103,18 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     @MessageBody() data: { canvasId: string },
   ) {
     await client.leave(data.canvasId);
-    const result = this.presenceService.removeUser(client.id);
+    const result = this.presenceService.removeViewer(client.id);
     if (result) {
       this.server.to(result.canvasId).emit('presence:update', { users: result.users });
     }
   }
 
-  @SubscribeMessage('node:create')
-  async handleNodeCreate(
-    @ConnectedSocket() client: TypedSocket,
-    @MessageBody() data: { node: CreateNodePayload },
+  @SubscribeMessage('viewport:update')
+  handleViewportUpdate(
+    @ConnectedSocket() _client: TypedSocket,
+    @MessageBody() _data: { x: number; y: number; w: number; h: number; zoom: number },
   ) {
-    const canvasId = this.presenceService.getCanvasIdForSocket(client.id);
-    if (!canvasId) return;
-
-    const node = await this.nodesService.create(canvasId, data.node);
-    client.to(canvasId).emit('node:created', { node });
-  }
-
-  @SubscribeMessage('node:update')
-  async handleNodeUpdate(
-    @ConnectedSocket() client: TypedSocket,
-    @MessageBody() data: { id: string; patch: Partial<NodePayload> },
-  ) {
-    const canvasId = this.presenceService.getCanvasIdForSocket(client.id);
-    if (!canvasId) return;
-
-    await this.nodesService.update(data.id, data.patch);
-    client.to(canvasId).emit('node:updated', { id: data.id, patch: data.patch });
-  }
-
-  @SubscribeMessage('node:delete')
-  async handleNodeDelete(
-    @ConnectedSocket() client: TypedSocket,
-    @MessageBody() data: { id: string },
-  ) {
-    const canvasId = this.presenceService.getCanvasIdForSocket(client.id);
-    if (!canvasId) return;
-
-    await this.nodesService.remove(data.id);
-    client.to(canvasId).emit('node:deleted', { id: data.id });
-  }
-
-  @SubscribeMessage('cursor:move')
-  async handleCursorMove(
-    @ConnectedSocket() client: TypedSocket,
-    @MessageBody() data: { x: number; y: number },
-  ) {
-    const canvasId = this.presenceService.getCanvasIdForSocket(client.id);
-    if (!canvasId) return;
-
-    const user = this.presenceService.updateCursor(client.id, canvasId, data.x, data.y);
-    if (!user) return;
-
-    await this.redis.publish(
-      CURSOR_CHANNEL,
-      JSON.stringify({
-        canvasId,
-        excludeSocketId: client.id,
-        payload: {
-          userId: user.userId,
-          x: data.x,
-          y: data.y,
-          name: user.name,
-          color: user.color,
-        },
-      }),
-    );
-  }
-
-  @SubscribeMessage('selection:change')
-  handleSelectionChange(
-    @ConnectedSocket() client: TypedSocket,
-    @MessageBody() data: { nodeIds: string[] },
-  ) {
-    const canvasId = this.presenceService.getCanvasIdForSocket(client.id);
-    if (!canvasId) return;
-
-    const user = this.presenceService.getUser(client.id, canvasId);
-    if (!user) return;
-
-    client.to(canvasId).emit('selection:changed', {
-      userId: user.userId,
-      nodeIds: data.nodeIds,
-    });
+    // Placeholder for future viewport-based culling optimisation.
+    // Agents may use this to know which area the viewer is watching.
   }
 }

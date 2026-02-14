@@ -5,6 +5,7 @@ import { RedisModule } from './redis/redis.module';
 import { CanvasModule } from './canvas/canvas.module';
 import { NodesModule } from './nodes/nodes.module';
 import { CollaborationModule } from './collaboration/collaboration.module';
+import { AgentModule } from './agent/agent.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { CollaborationModule } from './collaboration/collaboration.module';
     CanvasModule,
     NodesModule,
     CollaborationModule,
+    AgentModule,
   ],
 })
 export class AppModule {}

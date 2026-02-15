@@ -8,6 +8,7 @@ import { useCanvasStore } from '@/stores/canvas-store';
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:4000';
+const VIEWPORT_PREFETCH_PADDING = 220;
 
 /**
  * Hook that connects to the canvas WebSocket namespace and feeds
@@ -44,7 +45,20 @@ export function useCanvasSocket(canvasId: string) {
     /* ── connection lifecycle ─────────────────────── */
     socket.on('connect', () => {
       setConnected(true);
-      socket.emit('join-canvas', { canvasId });
+      const vp = useCanvasStore.getState().viewport;
+      const width = window.innerWidth || 1200;
+      const height = window.innerHeight || 800;
+
+      socket.emit('join-canvas', {
+        canvasId,
+        viewport: {
+          x: -vp.x / vp.zoom - VIEWPORT_PREFETCH_PADDING,
+          y: -vp.y / vp.zoom - VIEWPORT_PREFETCH_PADDING,
+          w: width / vp.zoom + VIEWPORT_PREFETCH_PADDING * 2,
+          h: height / vp.zoom + VIEWPORT_PREFETCH_PADDING * 2,
+          zoom: vp.zoom,
+        },
+      });
     });
 
     socket.on('disconnect', () => {

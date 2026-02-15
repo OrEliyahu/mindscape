@@ -10,7 +10,7 @@ import type { AgentStatus, PresenceUser } from './agent-types';
  */
 export interface ClientToServerEvents {
   /** Join a canvas room to start receiving updates */
-  'join-canvas': (data: { canvasId: string }) => void;
+  'join-canvas': (data: { canvasId: string; viewport?: { x: number; y: number; w: number; h: number; zoom: number } }) => void;
   /** Leave the canvas room */
   'leave-canvas': (data: { canvasId: string }) => void;
   /** Request a specific viewport slice (optional optimisation) */

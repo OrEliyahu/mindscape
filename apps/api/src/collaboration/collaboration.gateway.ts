@@ -11,8 +11,11 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { CanvasService } from '../canvas/canvas.service';
+import { NodesService } from '../nodes/nodes.service';
+import { EdgesService } from '../edges/edges.service';
 import { PresenceService } from './presence.service';
 import { AgentBroadcastService } from './agent-broadcast.service';
+import { toNodePayload, toEdgePayload } from '../common/mappers';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
@@ -46,6 +49,8 @@ export class CollaborationGateway implements OnGatewayInit, OnGatewayConnection,
 
   constructor(
     private readonly canvasService: CanvasService,
+    private readonly nodesService: NodesService,
+    private readonly edgesService: EdgesService,
     private readonly presenceService: PresenceService,
     private readonly agentBroadcast: AgentBroadcastService,
   ) {}
@@ -76,7 +81,7 @@ export class CollaborationGateway implements OnGatewayInit, OnGatewayConnection,
   @SubscribeMessage('join-canvas')
   async handleJoinCanvas(
     @ConnectedSocket() client: TypedSocket,
-    @MessageBody() data: { canvasId: string },
+    @MessageBody() data: { canvasId: string; viewport?: { x: number; y: number; w: number; h: number; zoom: number } },
   ) {
     const { canvasId } = data;
     await client.join(canvasId);
@@ -86,13 +91,7 @@ export class CollaborationGateway implements OnGatewayInit, OnGatewayConnection,
 
     const users = this.presenceService.addViewer(canvasId, client.id, userId, name);
 
-    // Send current canvas state to the newly-joined viewer
-    // findOneWithNodes already returns mapped camelCase payloads
-    const canvas = await this.canvasService.findOneWithNodes(canvasId);
-    client.emit('canvas:state', {
-      nodes: canvas.nodes as NodePayload[],
-      edges: canvas.edges as EdgePayload[],
-    });
+    await this.emitViewportState(client, canvasId, data.viewport);
 
     // Notify everyone in the room about updated viewer list
     this.server.to(canvasId).emit('presence:update', { users });
@@ -111,11 +110,36 @@ export class CollaborationGateway implements OnGatewayInit, OnGatewayConnection,
   }
 
   @SubscribeMessage('viewport:update')
-  handleViewportUpdate(
-    @ConnectedSocket() _client: TypedSocket,
-    @MessageBody() _data: { x: number; y: number; w: number; h: number; zoom: number },
+  async handleViewportUpdate(
+    @ConnectedSocket() client: TypedSocket,
+    @MessageBody() data: { x: number; y: number; w: number; h: number; zoom: number },
   ) {
-    // Placeholder for future viewport-based culling optimisation.
-    // Agents may use this to know which area the viewer is watching.
+    const canvasId = this.presenceService.getCanvasIdForSocket(client.id);
+    if (!canvasId) return;
+    await this.emitViewportState(client, canvasId, data);
+  }
+
+  private async emitViewportState(
+    client: TypedSocket,
+    canvasId: string,
+    viewport?: { x: number; y: number; w: number; h: number; zoom: number },
+  ) {
+    if (!viewport) {
+      const canvas = await this.canvasService.findOneWithNodes(canvasId);
+      client.emit('canvas:state', {
+        nodes: canvas.nodes as NodePayload[],
+        edges: canvas.edges as EdgePayload[],
+      });
+      return;
+    }
+
+    const rows = await this.nodesService.findInViewport(canvasId, viewport.x, viewport.y, viewport.w, viewport.h);
+    const nodes = rows.map(toNodePayload);
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = (await this.edgesService.findByCanvas(canvasId))
+      .map(toEdgePayload)
+      .filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId));
+
+    client.emit('canvas:state', { nodes, edges });
   }
 }

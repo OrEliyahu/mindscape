@@ -22,3 +22,11 @@ export class CanvasSessionParamDto {
   @IsUUID()
   sessionId!: string;
 }
+
+export class CanvasSnapshotParamDto {
+  @IsUUID()
+  id!: string;
+
+  @IsUUID()
+  snapshotId!: string;
+}

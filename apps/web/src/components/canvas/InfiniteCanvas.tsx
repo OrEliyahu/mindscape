@@ -19,6 +19,26 @@ const MAX_ZOOM = 5;
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const CURSOR_FADE_MS = 3000;
 
+interface SnapshotSummary {
+  id: string;
+  version: number;
+  createdAt: string;
+}
+
+interface SnapshotDetail extends SnapshotSummary {
+  nodes: NodePayload[];
+  edges: EdgePayload[];
+}
+
+interface SnapshotDiff {
+  nodeAdded: string[];
+  nodeRemoved: string[];
+  nodeUpdated: string[];
+  edgeAdded: string[];
+  edgeRemoved: string[];
+  edgeUpdated: string[];
+}
+
 /* ─── Node type → colour mapping ──────────────────── */
 const NODE_COLORS: Record<string, string> = {
   sticky_note: '#fff3bf',
@@ -153,9 +173,33 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const agentCursors = useCanvasStore((s) => s.agentCursors);
   const pruneStaleAgentCursors = useCanvasStore((s) => s.pruneStaleAgentCursors);
   const agentActivity = useCanvasStore((s) => s.agentActivity);
+  const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
+  const [timelineIndex, setTimelineIndex] = useState(0);
+  const [snapshotPreview, setSnapshotPreview] = useState<SnapshotDetail | null>(null);
+  const [snapshotDiff, setSnapshotDiff] = useState<SnapshotDiff | null>(null);
 
   const nodeArray = useMemo(() => Array.from(nodes.values()), [nodes]);
   const edgeArray = useMemo(() => Array.from(edges.values()), [edges]);
+  const orderedSnapshots = useMemo(
+    () => [...snapshots].sort((a, b) => a.version - b.version),
+    [snapshots],
+  );
+  const selectedSnapshot = useMemo(
+    () => (timelineIndex === 0 ? null : orderedSnapshots[timelineIndex - 1] ?? null),
+    [orderedSnapshots, timelineIndex],
+  );
+  const renderNodes = snapshotPreview?.nodes ?? nodeArray;
+  const renderEdges = snapshotPreview?.edges ?? edgeArray;
+  const renderNodeMap = useMemo(
+    () => new Map(renderNodes.map((node) => [node.id, node])),
+    [renderNodes],
+  );
+
+  useEffect(() => {
+    if (timelineIndex > orderedSnapshots.length) {
+      setTimelineIndex(orderedSnapshots.length);
+    }
+  }, [orderedSnapshots.length, timelineIndex]);
   const agentCount = useMemo(() => presence.filter((u) => u.isAgent).length, [presence]);
   const viewerCount = useMemo(() => presence.filter((u) => !u.isAgent).length, [presence]);
   const [canvasTitle, setCanvasTitle] = useState<string>('Canvas');
@@ -225,6 +269,28 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   }, [canvasId]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadSnapshots = async () => {
+      try {
+        const res = await fetch(`${API_URL}/canvases/${canvasId}/snapshots?limit=100`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const body = (await res.json()) as SnapshotSummary[];
+        if (!cancelled) setSnapshots(body);
+      } catch {
+        if (!cancelled) setSnapshots([]);
+      }
+    };
+
+    loadSnapshots();
+    const interval = window.setInterval(loadSnapshots, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [canvasId]);
+
+  useEffect(() => {
     const ticker = window.setInterval(() => {
       setTick((v) => v + 1);
       pruneStaleAgentCursors(CURSOR_FADE_MS);
@@ -249,6 +315,42 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       cancelled = true;
     };
   }, [canvasId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSnapshotPreview = async () => {
+      if (!selectedSnapshot) {
+        setSnapshotPreview(null);
+        setSnapshotDiff(null);
+        return;
+      }
+
+      try {
+        const [snapshotRes, diffRes] = await Promise.all([
+          fetch(`${API_URL}/canvases/${canvasId}/snapshots/${selectedSnapshot.id}`, { cache: 'no-store' }),
+          fetch(`${API_URL}/canvases/${canvasId}/snapshots/${selectedSnapshot.id}/diff`, { cache: 'no-store' }),
+        ]);
+        if (!snapshotRes.ok) return;
+        const snapshotBody = (await snapshotRes.json()) as SnapshotDetail;
+        const diffBody = diffRes.ok ? (await diffRes.json()) as SnapshotDiff : null;
+        if (!cancelled) {
+          setSnapshotPreview(snapshotBody);
+          setSnapshotDiff(diffBody);
+        }
+      } catch {
+        if (!cancelled) {
+          setSnapshotPreview(null);
+          setSnapshotDiff(null);
+        }
+      }
+    };
+
+    loadSnapshotPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [canvasId, selectedSnapshot]);
 
   /* ── zoom ──────────────────────────────────────── */
   const handleWheel = useCallback(
@@ -299,7 +401,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   }, [setViewport]);
 
   const fitToContent = useCallback(() => {
-    const bounds = computeContentBounds(nodeArray);
+    const bounds = computeContentBounds(renderNodes);
     if (!bounds) {
       resetView();
       return;
@@ -315,21 +417,21 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       x: stageSize.width / 2 - (bounds.minX + bounds.width / 2) * nextZoom,
       y: stageSize.height / 2 - (bounds.minY + bounds.height / 2) * nextZoom,
     });
-  }, [nodeArray, resetView, setViewport, stageSize.height, stageSize.width]);
+  }, [renderNodes, resetView, setViewport, stageSize.height, stageSize.width]);
 
   const nodeTypes = useMemo(() => {
-    return Array.from(new Set(nodeArray.map((node) => node.type))).sort();
-  }, [nodeArray]);
+    return Array.from(new Set(renderNodes.map((node) => node.type))).sort();
+  }, [renderNodes]);
 
   const filteredNodes = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return nodeArray.filter((node) => {
+    return renderNodes.filter((node) => {
       const matchesType = typeFilter === 'all' || node.type === typeFilter;
       const contentText = JSON.stringify(node.content ?? {}).toLowerCase();
       const matchesQuery = !q || contentText.includes(q);
       return matchesType && matchesQuery;
     });
-  }, [nodeArray, searchQuery, typeFilter]);
+  }, [renderNodes, searchQuery, typeFilter]);
 
   const hasActiveSearch = searchQuery.trim().length > 0 || typeFilter !== 'all';
   const highlightedNodeIds = useMemo(() => new Set(filteredNodes.map((node) => node.id)), [filteredNodes]);
@@ -461,7 +563,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
           {agentCount} agent{agentCount !== 1 ? 's' : ''}
         </span>
         <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>
-          {nodeArray.length} node{nodeArray.length !== 1 ? 's' : ''}
+          {renderNodes.length} node{renderNodes.length !== 1 ? 's' : ''}
         </span>
       </div>
       {activePersonaBadges.length > 0 ? (
@@ -684,14 +786,14 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       >
         {/* Edges layer (behind nodes) */}
         <Layer>
-          {edgeArray.map((edge) => (
-            <EdgeLine key={edge.id} edge={edge} nodes={nodes} />
+          {renderEdges.map((edge) => (
+            <EdgeLine key={edge.id} edge={edge} nodes={renderNodeMap} />
           ))}
         </Layer>
 
         {/* Nodes layer */}
         <Layer>
-          {nodeArray.length === 0 ? (
+          {renderNodes.length === 0 ? (
             // Empty state
             <Group>
               <Rect
@@ -721,7 +823,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
               />
             </Group>
           ) : (
-            nodeArray.map((node) => (
+            renderNodes.map((node) => (
               <CanvasNodeRect
                 key={node.id}
                 node={node}
@@ -775,6 +877,46 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
         }}
       >
         Scroll to zoom. Drag to pan. Viewers are read-only.
+      </div>
+
+      <div
+        style={{
+          position: 'absolute',
+          right: 16,
+          bottom: 16,
+          zIndex: 10,
+          width: 'min(360px, calc(100vw - 32px))',
+          borderRadius: 10,
+          border: '1px solid rgba(148, 163, 184, 0.4)',
+          background: 'rgba(255,255,255,0.92)',
+          padding: '0.55rem 0.7rem',
+          fontSize: '0.75rem',
+          color: '#334155',
+          fontFamily: '"SF Pro Text", "Segoe UI", sans-serif',
+          display: 'grid',
+          gap: 6,
+        }}
+      >
+        <div style={{ fontWeight: 700 }}>Snapshot Timeline</div>
+        <input
+          type="range"
+          min={0}
+          max={orderedSnapshots.length}
+          value={Math.min(timelineIndex, orderedSnapshots.length)}
+          onChange={(e) => setTimelineIndex(Number(e.target.value))}
+        />
+        <div>
+          {selectedSnapshot
+            ? `Viewing snapshot v${selectedSnapshot.version} (${new Date(selectedSnapshot.createdAt).toLocaleString()})`
+            : 'Viewing live canvas'}
+        </div>
+        {snapshotDiff ? (
+          <div style={{ color: '#475569' }}>
+            Δ nodes +{snapshotDiff.nodeAdded.length} / -{snapshotDiff.nodeRemoved.length} / ~{snapshotDiff.nodeUpdated.length}
+            {' · '}
+            edges +{snapshotDiff.edgeAdded.length} / -{snapshotDiff.edgeRemoved.length} / ~{snapshotDiff.edgeUpdated.length}
+          </div>
+        ) : null}
       </div>
 
       {/* ── Activity feed (viewer-only, no actions) ── */}

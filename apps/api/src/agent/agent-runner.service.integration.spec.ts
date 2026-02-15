@@ -5,7 +5,7 @@ import { AgentRunnerService } from './agent-runner.service';
 describe('AgentRunnerService integration', () => {
   const nodesService = { create: jest.fn(), update: jest.fn(), remove: jest.fn() };
   const edgesService = { create: jest.fn(), remove: jest.fn() };
-  const canvasService = { findOneWithNodes: jest.fn() };
+  const canvasService = { findOneWithNodes: jest.fn(), createSnapshot: jest.fn() };
   const broadcast = {
     broadcastAgentStatus: jest.fn(),
     broadcastAgentError: jest.fn(),

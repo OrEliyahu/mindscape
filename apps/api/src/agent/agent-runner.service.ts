@@ -96,6 +96,14 @@ export class AgentRunnerService {
       );
     }
 
+    // Capture current canvas state before every agent run for undo/history.
+    try {
+      await this.canvasService.createSnapshot(canvasId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to create pre-run snapshot for canvas ${canvasId}: ${message}`);
+    }
+
     // Create session with persona name
     const session = await this.sessions.create(canvasId, persona.key, model);
 

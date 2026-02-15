@@ -9,6 +9,7 @@ import { NodesModule } from './nodes/nodes.module';
 import { CollaborationModule } from './collaboration/collaboration.module';
 import { AgentModule } from './agent/agent.module';
 import { HealthModule } from './health/health.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { HealthModule } from './health/health.module';
     CollaborationModule,
     AgentModule,
     HealthModule,
+    AuthModule,
   ],
   providers: [
     {

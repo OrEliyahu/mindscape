@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fetchMe } from '@/lib/auth-api';
+import { clearSession, type AuthUser } from '@/lib/auth-session';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -101,6 +103,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   const loadCanvases = useCallback(async () => {
     try {
@@ -153,6 +156,10 @@ export default function HomePage() {
     return () => window.clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    fetchMe().then((session) => setUser(session?.user ?? null));
+  }, []);
+
   const totalLive = useMemo(
     () => Object.values(live).filter((m) => m.status === 'live').length,
     [live],
@@ -179,6 +186,24 @@ export default function HomePage() {
           </p>
           <div style={{ marginTop: '0.75rem', color: '#475569', fontSize: '0.9rem' }}>
             {canvases.length} canvases, {totalLive} live now
+          </div>
+          <div style={{ marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: 10 }}>
+            {user ? (
+              <>
+                <span style={{ color: '#334155', fontSize: '0.9rem' }}>Signed in as {user.name}</span>
+                <button
+                  onClick={() => {
+                    clearSession();
+                    setUser(null);
+                  }}
+                  style={{ border: '1px solid #cbd5e1', background: '#fff', borderRadius: 8, padding: '0.3rem 0.55rem' }}
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <Link href="/login" style={{ fontSize: '0.9rem' }}>Sign in / Sign up</Link>
+            )}
           </div>
         </header>
 

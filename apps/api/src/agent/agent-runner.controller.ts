@@ -5,6 +5,8 @@ import { InternalApiGuard } from './internal-api.guard';
 import { listPersonas } from './agent-registry';
 import { CanvasIdParamDto, CanvasSessionParamDto } from '../common/dto/uuid-param.dto';
 import { InvokeAgentDto } from './dto/invoke-agent.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CanvasOwnerGuard } from '../canvas/canvas-owner.guard';
 
 /**
  * REST endpoints for AI agent operations on a canvas.
@@ -25,8 +27,17 @@ export class AgentRunnerController {
    * Internal only — requires `x-internal-key` header.
    */
   @Post('invoke')
-  @UseGuards(InternalApiGuard)
+  @UseGuards(JwtAuthGuard, CanvasOwnerGuard)
   invoke(
+    @Param() params: CanvasIdParamDto,
+    @Body() body: InvokeAgentDto,
+  ) {
+    return this.runner.invoke(params.canvasId, body);
+  }
+
+  @Post('invoke/internal')
+  @UseGuards(InternalApiGuard)
+  invokeInternal(
     @Param() params: CanvasIdParamDto,
     @Body() body: InvokeAgentDto,
   ) {

@@ -1,16 +1,20 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { NodesService } from './nodes.service';
 import { BatchOperationsDto } from './dto/batch-operations.dto';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { ViewportQueryDto } from './dto/viewport-query.dto';
 import { CanvasIdParamDto, UuidParamDto } from '../common/dto/uuid-param.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CanvasOwnerGuard } from '../canvas/canvas-owner.guard';
+import { NodeOwnerGuard } from './node-owner.guard';
 
 @Controller()
 export class NodesController {
   constructor(private readonly nodesService: NodesService) {}
 
   @Post('canvases/:canvasId/nodes')
+  @UseGuards(JwtAuthGuard, CanvasOwnerGuard)
   create(
     @Param() params: CanvasIdParamDto,
     @Body() body: CreateNodeDto,
@@ -31,6 +35,7 @@ export class NodesController {
   }
 
   @Patch('nodes/:id')
+  @UseGuards(JwtAuthGuard, NodeOwnerGuard)
   update(@Param() params: UuidParamDto, @Body() body: UpdateNodeDto) {
     if (!Object.keys(body).length) {
       throw new BadRequestException('Update payload cannot be empty');
@@ -39,11 +44,13 @@ export class NodesController {
   }
 
   @Delete('nodes/:id')
+  @UseGuards(JwtAuthGuard, NodeOwnerGuard)
   remove(@Param() params: UuidParamDto) {
     return this.nodesService.remove(params.id);
   }
 
   @Post('canvases/:canvasId/nodes/batch')
+  @UseGuards(JwtAuthGuard, CanvasOwnerGuard)
   batch(
     @Param() params: CanvasIdParamDto,
     @Body() body: BatchOperationsDto,

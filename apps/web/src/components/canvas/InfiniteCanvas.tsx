@@ -141,7 +141,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const stageRef = useRef<Konva.Stage>(null);
 
   // Connect to the WebSocket (receive-only)
-  useCanvasSocket(canvasId);
+  const socketRef = useCanvasSocket(canvasId);
 
   // Read from Zustand store
   const nodes = useCanvasStore((s) => s.nodes);
@@ -174,6 +174,25 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
   }, []);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return;
+
+    const padding = 220;
+    const worldX = -viewport.x / viewport.zoom - padding;
+    const worldY = -viewport.y / viewport.zoom - padding;
+    const worldW = stageSize.width / viewport.zoom + padding * 2;
+    const worldH = stageSize.height / viewport.zoom + padding * 2;
+
+    socket.emit('viewport:update', {
+      x: worldX,
+      y: worldY,
+      w: worldW,
+      h: worldH,
+      zoom: viewport.zoom,
+    });
+  }, [socketRef, stageSize.height, stageSize.width, viewport.x, viewport.y, viewport.zoom]);
 
   useEffect(() => {
     let cancelled = false;

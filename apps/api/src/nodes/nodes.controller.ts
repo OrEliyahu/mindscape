@@ -1,5 +1,10 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { NodesService } from './nodes.service';
+import { BatchOperationsDto } from './dto/batch-operations.dto';
+import { CreateNodeDto } from './dto/create-node.dto';
+import { UpdateNodeDto } from './dto/update-node.dto';
+import { ViewportQueryDto } from './dto/viewport-query.dto';
+import { CanvasIdParamDto, UuidParamDto } from '../common/dto/uuid-param.dto';
 
 @Controller()
 export class NodesController {
@@ -7,48 +12,45 @@ export class NodesController {
 
   @Post('canvases/:canvasId/nodes')
   create(
-    @Param('canvasId') canvasId: string,
-    @Body() body: {
-      type: string;
-      positionX?: number;
-      positionY?: number;
-      width?: number;
-      height?: number;
-      content?: Record<string, unknown>;
-      style?: Record<string, unknown>;
-      createdBy?: string;
-    },
+    @Param() params: CanvasIdParamDto,
+    @Body() body: CreateNodeDto,
   ) {
-    return this.nodesService.create(canvasId, body);
+    return this.nodesService.create(params.canvasId, body);
   }
 
   @Get('canvases/:canvasId/nodes')
   findByCanvas(
-    @Param('canvasId') canvasId: string,
-    @Query('viewport') viewport?: string,
+    @Param() params: CanvasIdParamDto,
+    @Query() query: ViewportQueryDto,
   ) {
-    if (viewport) {
-      const [x, y, w, h] = viewport.split(',').map(Number);
-      return this.nodesService.findInViewport(canvasId, x, y, w, h);
+    if (query.viewport) {
+      const [x, y, w, h] = query.viewport.split(',').map(Number);
+      return this.nodesService.findInViewport(params.canvasId, x, y, w, h);
     }
-    return this.nodesService.findByCanvas(canvasId);
+    return this.nodesService.findByCanvas(params.canvasId);
   }
 
   @Patch('nodes/:id')
-  update(@Param('id') id: string, @Body() body: Record<string, unknown>) {
-    return this.nodesService.update(id, body);
+  update(@Param() params: UuidParamDto, @Body() body: UpdateNodeDto) {
+    if (!Object.keys(body).length) {
+      throw new BadRequestException('Update payload cannot be empty');
+    }
+    return this.nodesService.update(params.id, { ...body });
   }
 
   @Delete('nodes/:id')
-  remove(@Param('id') id: string) {
-    return this.nodesService.remove(id);
+  remove(@Param() params: UuidParamDto) {
+    return this.nodesService.remove(params.id);
   }
 
   @Post('canvases/:canvasId/nodes/batch')
   batch(
-    @Param('canvasId') canvasId: string,
-    @Body() body: { operations: Array<{ action: 'create' | 'update' | 'delete'; data: Record<string, unknown> }> },
+    @Param() params: CanvasIdParamDto,
+    @Body() body: BatchOperationsDto,
   ) {
-    return this.nodesService.batch(canvasId, body.operations);
+    if (!body.operations.length) {
+      throw new BadRequestException('Batch operations cannot be empty');
+    }
+    return this.nodesService.batch(params.canvasId, body.operations);
   }
 }

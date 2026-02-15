@@ -1,5 +1,8 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { CanvasService } from './canvas.service';
+import { UuidParamDto } from '../common/dto/uuid-param.dto';
+import { CreateCanvasDto } from './dto/create-canvas.dto';
+import { UpdateCanvasDto } from './dto/update-canvas.dto';
 
 @Controller('canvases')
 export class CanvasController {
@@ -11,22 +14,25 @@ export class CanvasController {
   }
 
   @Post()
-  create(@Body() body: { title?: string; ownerId?: string }) {
+  create(@Body() body: CreateCanvasDto) {
     return this.canvasService.create(body.title, body.ownerId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.canvasService.findOneWithNodes(id);
+  findOne(@Param() params: UuidParamDto) {
+    return this.canvasService.findOneWithNodes(params.id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() body: { title?: string; settings?: Record<string, unknown> }) {
-    return this.canvasService.update(id, body);
+  update(@Param() params: UuidParamDto, @Body() body: UpdateCanvasDto) {
+    if (!Object.keys(body).length) {
+      throw new BadRequestException('Update payload cannot be empty');
+    }
+    return this.canvasService.update(params.id, body);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.canvasService.remove(id);
+  remove(@Param() params: UuidParamDto) {
+    return this.canvasService.remove(params.id);
   }
 }

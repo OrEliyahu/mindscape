@@ -8,12 +8,17 @@ import { CanvasModule } from './canvas/canvas.module';
 import { NodesModule } from './nodes/nodes.module';
 import { CollaborationModule } from './collaboration/collaboration.module';
 import { AgentModule } from './agent/agent.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['.env', '../../.env'],
+      envFilePath: [
+        `.env.${process.env.NODE_ENV ?? 'development'}`,
+        '.env',
+        '../../.env',
+      ],
     }),
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
@@ -28,6 +33,7 @@ import { AgentModule } from './agent/agent.module';
     NodesModule,
     CollaborationModule,
     AgentModule,
+    HealthModule,
   ],
   providers: [
     {

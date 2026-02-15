@@ -1,6 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -10,7 +12,17 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  const requestSizeLimit = process.env.REQUEST_SIZE_LIMIT ?? '256kb';
+  app.use(json({ limit: requestSizeLimit }));
+  app.use(urlencoded({ limit: requestSizeLimit, extended: true }));
+
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+    transformOptions: { enableImplicitConversion: true },
+  }));
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   const port = process.env.API_PORT ?? 4000;
   await app.listen(port);

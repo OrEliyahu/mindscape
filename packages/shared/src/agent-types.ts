@@ -21,7 +21,7 @@ export interface AgentToolCall {
 
 export interface AgentInvokePayload {
   prompt: string;
-  model: string;
+  model?: string;
   agentType?: string;
   context?: {
     selectedNodeIds?: string[];

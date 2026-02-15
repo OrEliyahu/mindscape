@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NodesService } from '../nodes/nodes.service';
 import { EdgesService } from '../edges/edges.service';
@@ -8,6 +8,7 @@ import { AgentSessionRepository } from './agent-session.repository';
 import { toolsToOpenRouterFormat } from './agent-tools';
 import { buildSystemPrompt, getPersona, DEFAULT_PERSONA_KEY } from './agent-registry';
 import { toNodePayload, toEdgePayload } from '../common/mappers';
+import { sanitizeAgentPrompt } from '../common/utils/sanitize-agent-prompt';
 import type { AgentInvokePayload, NodePayload, EdgePayload } from '@mindscape/shared';
 
 interface LLMMessage {
@@ -73,8 +74,18 @@ export class AgentRunnerService {
    * Progress is streamed to viewers via AgentBroadcastService.
    */
   async invoke(canvasId: string, payload: AgentInvokePayload): Promise<{ sessionId: string; agentType: string }> {
-    const model = payload.model || 'google/gemini-2.0-flash-001';
-    const agentType = payload.agentType || DEFAULT_PERSONA_KEY;
+    const sanitizedPrompt = sanitizeAgentPrompt(payload.prompt);
+    if (!sanitizedPrompt) {
+      throw new BadRequestException('Prompt cannot be empty');
+    }
+
+    const normalizedPayload: AgentInvokePayload = {
+      ...payload,
+      prompt: sanitizedPrompt,
+    };
+
+    const model = normalizedPayload.model || 'google/gemini-2.0-flash-001';
+    const agentType = normalizedPayload.agentType || DEFAULT_PERSONA_KEY;
     const persona = getPersona(agentType);
 
     // Check concurrent session limit
@@ -98,7 +109,7 @@ export class AgentRunnerService {
     this.logger.log(`Agent session ${session.id} (${persona.name}) started on canvas ${canvasId}`);
 
     // Run agent loop in background (don't await)
-    this.runAgentLoop(canvasId, session.id, model, agentType, payload)
+    this.runAgentLoop(canvasId, session.id, model, agentType, normalizedPayload)
       .catch((err) => {
         this.logger.error(`Agent session ${session.id} failed: ${err.message}`);
         this.sessions.updateStatus(session.id, 'error');

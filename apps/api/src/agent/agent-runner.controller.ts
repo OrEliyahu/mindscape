@@ -3,7 +3,8 @@ import { AgentRunnerService } from './agent-runner.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { InternalApiGuard } from './internal-api.guard';
 import { listPersonas } from './agent-registry';
-import type { AgentInvokePayload } from '@mindscape/shared';
+import { CanvasIdParamDto, CanvasSessionParamDto } from '../common/dto/uuid-param.dto';
+import { InvokeAgentDto } from './dto/invoke-agent.dto';
 
 /**
  * REST endpoints for AI agent operations on a canvas.
@@ -26,10 +27,10 @@ export class AgentRunnerController {
   @Post('invoke')
   @UseGuards(InternalApiGuard)
   invoke(
-    @Param('canvasId') canvasId: string,
-    @Body() body: AgentInvokePayload,
+    @Param() params: CanvasIdParamDto,
+    @Body() body: InvokeAgentDto,
   ) {
-    return this.runner.invoke(canvasId, body);
+    return this.runner.invoke(params.canvasId, body);
   }
 
   /** List available agent personas (public / viewer-accessible) */
@@ -42,13 +43,13 @@ export class AgentRunnerController {
 
   /** List all agent sessions for a canvas (public / viewer-accessible) */
   @Get('sessions')
-  listSessions(@Param('canvasId') canvasId: string) {
-    return this.sessions.findByCanvas(canvasId);
+  listSessions(@Param() params: CanvasIdParamDto) {
+    return this.sessions.findByCanvas(params.canvasId);
   }
 
   /** Get a specific agent session (public / viewer-accessible) */
   @Get('sessions/:sessionId')
-  getSession(@Param('sessionId') sessionId: string) {
-    return this.sessions.findById(sessionId);
+  getSession(@Param() params: CanvasSessionParamDto) {
+    return this.sessions.findById(params.sessionId);
   }
 }

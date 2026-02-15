@@ -134,6 +134,14 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   pruneStaleAgentCursors: (maxAgeMs) =>
     set((s) => {
       const cutoff = Date.now() - maxAgeMs;
+      let pruned = false;
+      for (const cursor of s.agentCursors.values()) {
+        if (cursor.timestamp < cutoff) {
+          pruned = true;
+          break;
+        }
+      }
+      if (!pruned) return s;
       const next = new Map(s.agentCursors);
       for (const [sessionId, cursor] of next) {
         if (cursor.timestamp < cutoff) {

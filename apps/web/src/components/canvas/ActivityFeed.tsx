@@ -1,14 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useCanvasStore } from '@/stores/canvas-store';
 import type { AgentActivity } from '@/stores/canvas-store';
-import {
-  getAgentPersonas,
-  getAgentSessions,
-  type AgentPersona,
-  type AgentSessionSummary,
-} from '@/lib/agent-persona-client';
+import type { AgentPersona, AgentSessionSummary } from '@/lib/agent-persona-client';
 
 type ActivityFilter = 'all' | AgentActivity['type'];
 const DEFAULT_PERSONA: AgentPersona = {
@@ -109,53 +104,18 @@ function ActivityEntry({ entry, persona }: { entry: AgentActivity; persona: Agen
 }
 
 /* ─── Activity feed panel ─────────────────────── */
-export default function ActivityFeed({ canvasId }: { canvasId: string }) {
+export default function ActivityFeed({
+  personas,
+  sessions,
+}: {
+  personas: AgentPersona[];
+  sessions: AgentSessionSummary[];
+}) {
   const activity = useCanvasStore((s) => s.agentActivity);
   const clearAgentActivity = useCanvasStore((s) => s.clearAgentActivity);
   const [collapsed, setCollapsed] = useState(false);
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const listRef = useRef<HTMLDivElement>(null);
-  const [personas, setPersonas] = useState<AgentPersona[]>([]);
-  const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadPersonas = async () => {
-      try {
-        const next = await getAgentPersonas(canvasId);
-        if (!cancelled) {
-          setPersonas(next);
-        }
-      } catch {
-        if (!cancelled) {
-          setPersonas([]);
-        }
-      }
-    };
-
-    const loadSessions = async () => {
-      try {
-        const next = await getAgentSessions(canvasId);
-        if (!cancelled) {
-          setSessions(next);
-        }
-      } catch {
-        if (!cancelled) {
-          setSessions([]);
-        }
-      }
-    };
-
-    loadPersonas();
-    loadSessions();
-
-    const sessionInterval = window.setInterval(loadSessions, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(sessionInterval);
-    };
-  }, [canvasId]);
 
   const personasByKey = useMemo(() => {
     const map = new Map<string, AgentPersona>();

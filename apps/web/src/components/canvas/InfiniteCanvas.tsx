@@ -620,7 +620,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       </div>
 
       {/* ── Activity feed (viewer-only, no actions) ── */}
-      <ActivityFeed canvasId={canvasId} />
+      <ActivityFeed personas={personas} sessions={sessions} />
     </div>
   );
 }

@@ -1,8 +1,12 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { CanvasService } from './canvas.service';
 import { UuidParamDto } from '../common/dto/uuid-param.dto';
 import { CreateCanvasDto } from './dto/create-canvas.dto';
 import { UpdateCanvasDto } from './dto/update-canvas.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/auth.types';
+import { CanvasOwnerGuard } from './canvas-owner.guard';
 
 @Controller('canvases')
 export class CanvasController {
@@ -14,8 +18,9 @@ export class CanvasController {
   }
 
   @Post()
-  create(@Body() body: CreateCanvasDto) {
-    return this.canvasService.create(body.title, body.ownerId);
+  @UseGuards(JwtAuthGuard)
+  create(@Body() body: CreateCanvasDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.canvasService.create(body.title, user.sub);
   }
 
   @Get(':id')
@@ -24,6 +29,7 @@ export class CanvasController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, CanvasOwnerGuard)
   update(@Param() params: UuidParamDto, @Body() body: UpdateCanvasDto) {
     if (!Object.keys(body).length) {
       throw new BadRequestException('Update payload cannot be empty');
@@ -32,6 +38,7 @@ export class CanvasController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, CanvasOwnerGuard)
   remove(@Param() params: UuidParamDto) {
     return this.canvasService.remove(params.id);
   }

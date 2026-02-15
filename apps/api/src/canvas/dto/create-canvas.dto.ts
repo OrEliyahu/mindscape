@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateCanvasDto {
   @IsOptional()
@@ -7,8 +7,4 @@ export class CreateCanvasDto {
   @MaxLength(120)
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   title?: string;
-
-  @IsOptional()
-  @IsUUID()
-  ownerId?: string;
 }

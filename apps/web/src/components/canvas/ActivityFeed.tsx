@@ -3,8 +3,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCanvasStore } from '@/stores/canvas-store';
 import type { AgentActivity } from '@/stores/canvas-store';
+import {
+  getAgentPersonas,
+  getAgentSessions,
+  type AgentPersona,
+  type AgentSessionSummary,
+} from '@/lib/agent-persona-client';
 
 type ActivityFilter = 'all' | AgentActivity['type'];
+const DEFAULT_PERSONA: AgentPersona = {
+  key: 'unknown',
+  name: 'Agent',
+  emoji: '🤖',
+  color: '#64748b',
+  description: '',
+};
 
 function formatEntryBody(entry: AgentActivity) {
   switch (entry.type) {
@@ -40,7 +53,7 @@ function typeColor(type: AgentActivity['type']) {
 }
 
 /* ─── Single activity entry ───────────────────── */
-function ActivityEntry({ entry }: { entry: AgentActivity }) {
+function ActivityEntry({ entry, persona }: { entry: AgentActivity; persona: AgentPersona }) {
   const time = new Date(entry.timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -50,21 +63,33 @@ function ActivityEntry({ entry }: { entry: AgentActivity }) {
   const body = formatEntryBody(entry);
 
   return (
-    <div style={{ padding: '0.4rem 0', borderBottom: '1px solid #f1f5f9' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+    <div
+      style={{
+        padding: '0.45rem 0.55rem',
+        borderBottom: '1px solid #f1f5f9',
+        borderLeft: `3px solid ${persona.color}`,
+        borderRadius: 6,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.72rem', color: '#64748b' }}>{time}</span>
-        <span
-          style={{
-            fontSize: '0.68rem',
-            fontWeight: 600,
-            padding: '0.15rem 0.4rem',
-            borderRadius: 999,
-            background: color.bg,
-            color: color.fg,
-          }}
-        >
-          {color.label}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: '0.72rem', color: '#334155', fontWeight: 600 }}>
+            {persona.emoji} {persona.name}
+          </span>
+          <span
+            style={{
+              fontSize: '0.68rem',
+              fontWeight: 600,
+              padding: '0.15rem 0.4rem',
+              borderRadius: 999,
+              background: color.bg,
+              color: color.fg,
+            }}
+          >
+            {color.label}
+          </span>
+        </div>
       </div>
       <div
         style={{
@@ -84,12 +109,69 @@ function ActivityEntry({ entry }: { entry: AgentActivity }) {
 }
 
 /* ─── Activity feed panel ─────────────────────── */
-export default function ActivityFeed() {
+export default function ActivityFeed({ canvasId }: { canvasId: string }) {
   const activity = useCanvasStore((s) => s.agentActivity);
   const clearAgentActivity = useCanvasStore((s) => s.clearAgentActivity);
   const [collapsed, setCollapsed] = useState(false);
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const listRef = useRef<HTMLDivElement>(null);
+  const [personas, setPersonas] = useState<AgentPersona[]>([]);
+  const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPersonas = async () => {
+      try {
+        const next = await getAgentPersonas(canvasId);
+        if (!cancelled) {
+          setPersonas(next);
+        }
+      } catch {
+        if (!cancelled) {
+          setPersonas([]);
+        }
+      }
+    };
+
+    const loadSessions = async () => {
+      try {
+        const next = await getAgentSessions(canvasId);
+        if (!cancelled) {
+          setSessions(next);
+        }
+      } catch {
+        if (!cancelled) {
+          setSessions([]);
+        }
+      }
+    };
+
+    loadPersonas();
+    loadSessions();
+
+    const sessionInterval = window.setInterval(loadSessions, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(sessionInterval);
+    };
+  }, [canvasId]);
+
+  const personasByKey = useMemo(() => {
+    const map = new Map<string, AgentPersona>();
+    for (const persona of personas) {
+      map.set(persona.key, persona);
+    }
+    return map;
+  }, [personas]);
+
+  const sessionPersonaKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const session of sessions) {
+      map.set(session.id, session.agentName);
+    }
+    return map;
+  }, [sessions]);
 
   const filtered = useMemo(() => {
     if (filter === 'all') return activity;
@@ -219,9 +301,17 @@ export default function ActivityFeed() {
                 No activity yet. Waiting for agents...
               </div>
             ) : (
-              filtered.map((entry, i) => (
-                <ActivityEntry key={`${entry.sessionId}-${entry.timestamp}-${i}`} entry={entry} />
-              ))
+              filtered.map((entry, i) => {
+                const personaKey = sessionPersonaKey.get(entry.sessionId);
+                const persona = (personaKey ? personasByKey.get(personaKey) : undefined) ?? DEFAULT_PERSONA;
+                return (
+                  <ActivityEntry
+                    key={`${entry.sessionId}-${entry.timestamp}-${i}`}
+                    entry={entry}
+                    persona={persona}
+                  />
+                );
+              })
             )}
           </div>
         </>

@@ -65,13 +65,21 @@ function computeContentBounds(nodes: NodePayload[]) {
 }
 
 /* ─── Single canvas node ──────────────────────────── */
-function CanvasNodeRect({ node }: { node: NodePayload }) {
+function CanvasNodeRect({
+  node,
+  highlighted,
+  dimmed,
+}: {
+  node: NodePayload;
+  highlighted: boolean;
+  dimmed: boolean;
+}) {
   const fill = NODE_COLORS[node.type] ?? '#ffffff';
   const textColor = NODE_TEXT_COLORS[node.type] ?? '#333';
   const label = truncate(getNodeTitle(node));
 
   return (
-    <Group x={node.positionX} y={node.positionY}>
+    <Group x={node.positionX} y={node.positionY} opacity={dimmed ? 0.34 : 1}>
       <Rect
         width={node.width}
         height={node.height}
@@ -80,8 +88,8 @@ function CanvasNodeRect({ node }: { node: NodePayload }) {
         shadowBlur={12}
         shadowColor="rgba(15,23,42,0.12)"
         shadowOffsetY={4}
-        stroke="#d7dde7"
-        strokeWidth={1}
+        stroke={highlighted ? '#0ea5e9' : '#d7dde7'}
+        strokeWidth={highlighted ? 3 : 1}
       />
       <Rect x={0} y={0} width={node.width} height={6} fill="rgba(15,23,42,0.08)" cornerRadius={[10, 10, 0, 0]} />
       <Text
@@ -154,6 +162,8 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const [personas, setPersonas] = useState<AgentPersona[]>([]);
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [tick, setTick] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
 
   /* ── window resize ────────────────────────────── */
   const [stageSize, setStageSize] = useState({ width: 1200, height: 800 });
@@ -287,6 +297,35 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       y: stageSize.height / 2 - (bounds.minY + bounds.height / 2) * nextZoom,
     });
   }, [nodeArray, resetView, setViewport, stageSize.height, stageSize.width]);
+
+  const nodeTypes = useMemo(() => {
+    return Array.from(new Set(nodeArray.map((node) => node.type))).sort();
+  }, [nodeArray]);
+
+  const filteredNodes = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return nodeArray.filter((node) => {
+      const matchesType = typeFilter === 'all' || node.type === typeFilter;
+      const contentText = JSON.stringify(node.content ?? {}).toLowerCase();
+      const matchesQuery = !q || contentText.includes(q);
+      return matchesType && matchesQuery;
+    });
+  }, [nodeArray, searchQuery, typeFilter]);
+
+  const hasActiveSearch = searchQuery.trim().length > 0 || typeFilter !== 'all';
+  const highlightedNodeIds = useMemo(() => new Set(filteredNodes.map((node) => node.id)), [filteredNodes]);
+
+  const focusNode = useCallback(
+    (node: NodePayload) => {
+      const nextZoom = Math.max(0.7, viewport.zoom);
+      setViewport({
+        zoom: nextZoom,
+        x: stageSize.width / 2 - (node.positionX + node.width / 2) * nextZoom,
+        y: stageSize.height / 2 - (node.positionY + node.height / 2) * nextZoom,
+      });
+    },
+    [setViewport, stageSize.height, stageSize.width, viewport.zoom],
+  );
 
   const personasByKey = useMemo(() => {
     const map = new Map<string, AgentPersona>();
@@ -457,10 +496,102 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
           top: 16,
           right: 16,
           zIndex: 10,
-          display: 'flex',
+          display: 'grid',
           gap: 8,
+          width: 'min(340px, calc(100vw - 32px))',
         }}
       >
+        <div
+          style={{
+            borderRadius: 12,
+            border: '1px solid rgba(148, 163, 184, 0.35)',
+            background: 'rgba(255,255,255,0.93)',
+            padding: 10,
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search node content..."
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              borderRadius: 8,
+              border: '1px solid #cbd5e1',
+              padding: '0.45rem 0.6rem',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              style={{
+                flex: 1,
+                borderRadius: 8,
+                border: '1px solid #cbd5e1',
+                padding: '0.4rem 0.5rem',
+                background: '#fff',
+              }}
+            >
+              <option value="all">All node types</option>
+              {nodeTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setTypeFilter('all');
+              }}
+              style={{
+                borderRadius: 8,
+                border: '1px solid #cbd5e1',
+                background: '#fff',
+                padding: '0.4rem 0.65rem',
+                fontSize: '0.78rem',
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          {hasActiveSearch ? (
+            <div style={{ fontSize: '0.78rem', color: '#475569' }}>
+              {filteredNodes.length} match{filteredNodes.length !== 1 ? 'es' : ''}
+            </div>
+          ) : null}
+          {hasActiveSearch && filteredNodes.length > 0 ? (
+            <div style={{ maxHeight: 180, overflowY: 'auto', display: 'grid', gap: 6 }}>
+              {filteredNodes.slice(0, 20).map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  onClick={() => focusNode(node)}
+                  style={{
+                    textAlign: 'left',
+                    border: '1px solid #dbeafe',
+                    background: '#eff6ff',
+                    borderRadius: 8,
+                    padding: '0.35rem 0.5rem',
+                    color: '#0f172a',
+                    fontSize: '0.78rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <strong style={{ fontSize: '0.74rem', color: '#0c4a6e' }}>
+                    {node.type.replace(/_/g, ' ')}
+                  </strong>
+                  <div>{truncate(getNodeTitle(node), 80)}</div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={fitToContent}
@@ -491,6 +622,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
         >
           Reset
         </button>
+        </div>
       </div>
 
       {!connected ? (
@@ -570,7 +702,14 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
               />
             </Group>
           ) : (
-            nodeArray.map((node) => <CanvasNodeRect key={node.id} node={node} />)
+            nodeArray.map((node) => (
+              <CanvasNodeRect
+                key={node.id}
+                node={node}
+                highlighted={highlightedNodeIds.has(node.id)}
+                dimmed={hasActiveSearch && !highlightedNodeIds.has(node.id)}
+              />
+            ))
           )}
         </Layer>
 

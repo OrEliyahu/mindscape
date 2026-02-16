@@ -23,11 +23,27 @@ export interface AgentInvokePayload {
   prompt: string;
   model?: string;
   agentType?: string;
+  depth?: number;
   context?: {
     selectedNodeIds?: string[];
     viewport?: { x: number; y: number; width: number; height: number; zoom: number };
   };
 }
+
+export type SharedContextEntryType = 'theme' | 'intention' | 'contribution' | 'request' | 'reaction';
+
+export interface SharedContextEntry {
+  id: string;
+  canvasId: string;
+  sessionId: string | null;
+  agentName: string;
+  entryType: SharedContextEntryType;
+  content: Record<string, unknown>;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export type CollaborationEventType = 'shared_context' | 'agent_request' | 'agent_reaction';
 
 export interface PresenceUser {
   id: string;

@@ -6,6 +6,7 @@ import type {
   NodePayload,
   EdgePayload,
   AgentStatus,
+  CollaborationEventType,
 } from '@mindscape/shared';
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -78,6 +79,19 @@ export class AgentBroadcastService {
 
   broadcastAgentError(canvasId: string, sessionId: string, error: string) {
     this.emit(canvasId, 'agent:error', { sessionId, error });
+  }
+
+  broadcastAgentCollaboration(
+    canvasId: string,
+    sessionId: string,
+    payload: {
+      type: CollaborationEventType;
+      fromAgent: string;
+      toAgent?: string;
+      summary: string;
+    },
+  ) {
+    this.emit(canvasId, 'agent:collaboration', { sessionId, ...payload });
   }
 
   /* ──────────────────── internal helper ──────────────────── */

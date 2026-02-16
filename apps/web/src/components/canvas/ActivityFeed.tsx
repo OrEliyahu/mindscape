@@ -25,6 +25,17 @@ function formatEntry(entry: AgentActivity): string {
     }
     case 'error':
       return `Error: ${String(entry.data)}`;
+    case 'collaboration': {
+      const body = entry.data as { fromAgent?: string; toAgent?: string; summary?: string; type?: string };
+      if (body.type === 'agent_request') {
+        const target = body.toAgent ? ` -> ${body.toAgent}` : '';
+        return `${body.fromAgent ?? 'Agent'} requested${target}: ${body.summary ?? 'collaboration request'}`;
+      }
+      if (body.type === 'agent_reaction') {
+        return `${body.fromAgent ?? 'Agent'} reacted: ${body.summary ?? 'reaction shared'}`;
+      }
+      return `${body.fromAgent ?? 'Agent'} shared context: ${body.summary ?? 'update'}`;
+    }
     default:
       return 'Event';
   }

@@ -113,6 +113,70 @@ export const CANVAS_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: 'share_creative_context',
+    description:
+      'Share a theme, intention, contribution summary, or request with other agents on this canvas.',
+    parameters: {
+      type: 'object',
+      required: ['entryType', 'content'],
+      properties: {
+        entryType: {
+          type: 'string',
+          enum: ['theme', 'intention', 'contribution', 'request', 'reaction'],
+          description: 'Type of shared context entry',
+        },
+        content: {
+          type: 'object',
+          description:
+            'Structured entry content. For request entries include targetPersona and ask. For reactions include toEntryId and response.',
+        },
+      },
+    },
+  },
+  {
+    name: 'read_shared_context',
+    description: 'Read recent creative context from other agents on this canvas.',
+    parameters: {
+      type: 'object',
+      properties: {
+        entryType: {
+          type: 'string',
+          enum: ['theme', 'intention', 'contribution', 'request', 'reaction'],
+          description: 'Optional entry type filter',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max number of entries to return (default 20, max 50)',
+        },
+      },
+    },
+  },
+  {
+    name: 'request_agent',
+    description:
+      'Request another persona to respond to your work. Creates a shared request and triggers that persona when capacity allows.',
+    parameters: {
+      type: 'object',
+      required: ['targetPersona', 'prompt'],
+      properties: {
+        targetPersona: {
+          type: 'string',
+          enum: ['brainstormer', 'architect', 'coder', 'analyst', 'canvas-agent'],
+          description: 'Persona key to invoke',
+        },
+        prompt: {
+          type: 'string',
+          description: 'Instruction for the requested persona',
+        },
+        refNodeIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional node IDs that should be used as references',
+        },
+      },
+    },
+  },
 ];
 
 /**

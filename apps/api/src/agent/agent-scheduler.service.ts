@@ -4,6 +4,7 @@ import { Interval } from '@nestjs/schedule';
 import { CanvasService } from '../canvas/canvas.service';
 import { AgentRunnerService } from './agent-runner.service';
 import { listPersonas } from './agent-registry';
+import { SharedContextRepository } from './shared-context.repository';
 
 const CHECK_INTERVAL_MS = 5000;
 const DEFAULT_ACTION_INTERVAL_MS = 45000;
@@ -47,6 +48,7 @@ export class AgentSchedulerService {
     private readonly configService: ConfigService,
     private readonly canvasService: CanvasService,
     private readonly agentRunner: AgentRunnerService,
+    private readonly sharedContext: SharedContextRepository,
   ) {
     this.enabled = this.configService.get<string>('AGENT_SCHEDULER_ENABLED', 'true') === 'true';
     this.actionIntervalMs = this.configService.get<number>(
@@ -69,8 +71,20 @@ export class AgentSchedulerService {
 
     const canvas = canvases[Math.floor(Math.random() * canvases.length)];
     const personas = listPersonas();
-    const persona = personas[Math.floor(Math.random() * personas.length)];
-    const prompt = this.pickPrompt(persona.key);
+    const personaKeys = new Set(personas.map((p) => p.key));
+    const openRequests = await this.sharedContext.getOpenRequests(canvas.id);
+    const directedRequest = openRequests.find((req) => {
+      const target = req.content.targetPersona;
+      return typeof target === 'string' && personaKeys.has(target);
+    });
+
+    const persona = directedRequest
+      ? personas.find((p) => p.key === directedRequest.content.targetPersona)!
+      : personas[Math.floor(Math.random() * personas.length)];
+
+    const prompt = directedRequest
+      ? this.buildRequestPrompt(directedRequest)
+      : this.pickPrompt(persona.key);
 
     try {
       await this.agentRunner.invoke(canvas.id, {
@@ -87,6 +101,16 @@ export class AgentSchedulerService {
 
   private pickPrompt(personaKey: string): string {
     const prompts = PERSONA_PROMPT_TEMPLATES[personaKey] ?? PERSONA_PROMPT_TEMPLATES['canvas-agent'];
-    return prompts[Math.floor(Math.random() * prompts.length)];
+    return `${prompts[Math.floor(Math.random() * prompts.length)]} Check shared context and respond to pending requests if relevant.`;
+  }
+
+  private buildRequestPrompt(request: {
+    agentName: string;
+    content: Record<string, unknown>;
+  }): string {
+    const ask = typeof request.content.ask === 'string'
+      ? request.content.ask
+      : 'Respond to a collaboration request with complementary creative output.';
+    return `A collaboration request from ${request.agentName}: ${ask} Check shared context first, then create matching contributions and summarize via shared context tools.`;
   }
 }

@@ -4,7 +4,7 @@ import type { NodePayload, EdgePayload, PresenceUser, AgentStatus } from '@minds
 /* ─── Agent activity entry shown in the activity feed ─── */
 export interface AgentActivity {
   sessionId: string;
-  type: 'status' | 'thought' | 'tool-call' | 'error';
+  type: 'status' | 'thought' | 'tool-call' | 'error' | 'collaboration';
   data: unknown;
   timestamp: number;
 }

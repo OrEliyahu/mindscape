@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
@@ -28,6 +29,7 @@ import { AuthModule } from './auth/auth.module';
         limit: config.get<number>('THROTTLE_LIMIT', 120),
       }],
     }),
+    ScheduleModule.forRoot(),
     DatabaseModule,
     RedisModule,
     CanvasModule,

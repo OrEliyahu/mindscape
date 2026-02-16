@@ -7,11 +7,12 @@ import { AuthModule } from '../auth/auth.module';
 import { AgentRunnerController } from './agent-runner.controller';
 import { AgentRunnerService } from './agent-runner.service';
 import { AgentSessionRepository } from './agent-session.repository';
+import { AgentSchedulerService } from './agent-scheduler.service';
 
 @Module({
   imports: [CanvasModule, NodesModule, EdgesModule, CollaborationModule, AuthModule],
   controllers: [AgentRunnerController],
-  providers: [AgentRunnerService, AgentSessionRepository],
+  providers: [AgentRunnerService, AgentSessionRepository, AgentSchedulerService],
   exports: [AgentRunnerService],
 })
 export class AgentModule {}

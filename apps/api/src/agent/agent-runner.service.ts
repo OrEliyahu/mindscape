@@ -166,6 +166,14 @@ export class AgentRunnerService {
       targetId: e.targetId,
       label: e.label,
     }));
+    const nodeSummaries = existingNodes.slice(0, 24).map((node) => ({
+      id: node.id,
+      type: node.type,
+      summary: this.extractNodeSummary(node.content),
+    }));
+    const edgeToNodeRatio = existingNodes.length > 0
+      ? (existingEdges.length / existingNodes.length).toFixed(2)
+      : '0.00';
 
     // Compute bounding box so the agent knows where free space is
     let spatialHint = 'The canvas is empty — start placing nodes near (0, 0).';
@@ -187,6 +195,9 @@ export class AgentRunnerService {
       `Canvas: "${canvas.title}" (${canvasId})`,
       `You are: ${persona.emoji} ${persona.name}`,
       spatialHint + multiAgentHint,
+      `Current edge-to-node ratio: ${edgeToNodeRatio}. If low, prioritize creating more relationships.`,
+      `Node summaries (${nodeSummaries.length}):`,
+      nodeSummaries.length > 0 ? JSON.stringify(nodeSummaries, null, 2) : '(none)',
       `Nodes (${existingNodes.length}):`,
       JSON.stringify(existingNodes, null, 2),
       `Edges (${existingEdges.length}):`,
@@ -357,6 +368,16 @@ export class AgentRunnerService {
       this.logger.warn(`Tool ${toolName} failed: ${message}`);
       return { error: message };
     }
+  }
+
+  private extractNodeSummary(content: Record<string, unknown>): string {
+    const text = typeof content.text === 'string' ? content.text : '';
+    const title = typeof content.title === 'string' ? content.title : '';
+    const code = typeof content.code === 'string' ? content.code : '';
+    const raw = [title, text, code].find((value) => value.trim().length > 0) ?? '';
+    if (!raw) return '(no textual content)';
+    const singleLine = raw.replace(/\s+/g, ' ').trim();
+    return singleLine.length > 120 ? `${singleLine.slice(0, 120)}...` : singleLine;
   }
 
   private async callLLM(

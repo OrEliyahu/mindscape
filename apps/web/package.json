@@ -9,15 +9,14 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.0",
+    "@mindscape/shared": "*",
     "next": "^15.3.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "react-konva": "^19.0.0",
-    "konva": "^9.3.0",
-    "zustand": "^5.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "socket.io-client": "^4.8.0",
     "yjs": "^13.6.0",
-    "@mindscape/shared": "*"
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

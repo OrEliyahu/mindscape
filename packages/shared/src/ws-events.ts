@@ -1,5 +1,5 @@
 import type { NodePayload, EdgePayload } from './canvas-types';
-import type { AgentStatus, PresenceUser } from './agent-types';
+import type { AgentStatus, CollaborationEventType, PresenceUser } from './agent-types';
 
 /**
  * Events the CLIENT can send to the server.
@@ -45,4 +45,11 @@ export interface ServerToClientEvents {
   'agent:tool-call': (data: { sessionId: string; tool: string; args: unknown; result: unknown }) => void;
   'agent:cursor': (data: { sessionId: string; x: number; y: number }) => void;
   'agent:error': (data: { sessionId: string; error: string }) => void;
+  'agent:collaboration': (data: {
+    sessionId: string;
+    type: CollaborationEventType;
+    fromAgent: string;
+    toAgent?: string;
+    summary: string;
+  }) => void;
 }

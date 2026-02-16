@@ -5,11 +5,12 @@ import { EdgesService } from '../edges/edges.service';
 import { CanvasService } from '../canvas/canvas.service';
 import { AgentBroadcastService } from '../collaboration/agent-broadcast.service';
 import { AgentSessionRepository } from './agent-session.repository';
+import { SharedContextRepository } from './shared-context.repository';
 import { toolsToOpenRouterFormat } from './agent-tools';
 import { buildSystemPrompt, getPersona, DEFAULT_PERSONA_KEY } from './agent-registry';
 import { toNodePayload, toEdgePayload } from '../common/mappers';
 import { sanitizeAgentPrompt } from '../common/utils/sanitize-agent-prompt';
-import type { AgentInvokePayload, NodePayload, EdgePayload } from '@mindscape/shared';
+import type { AgentInvokePayload, NodePayload, EdgePayload, SharedContextEntryType } from '@mindscape/shared';
 
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -38,6 +39,8 @@ interface LLMResponse {
 const MAX_TOOL_ROUNDS = 10;
 const MAX_CONCURRENT_SESSIONS_PER_CANVAS = 3;
 const TOOL_RATE_LIMIT_MS = 500; // minimum ms between tool executions
+const MAX_REQUEST_CHAIN_DEPTH = 3;
+const MAX_SHARED_CONTEXT_CHARS = 8000;
 
 /**
  * Executes an AI agent on a canvas.
@@ -53,6 +56,7 @@ export class AgentRunnerService {
 
   /** Track active sessions per canvas for concurrency limiting. */
   private readonly activeSessions = new Map<string, Set<string>>();
+  private readonly requestAgentCalled = new Set<string>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -61,6 +65,7 @@ export class AgentRunnerService {
     private readonly canvasService: CanvasService,
     private readonly broadcast: AgentBroadcastService,
     private readonly sessions: AgentSessionRepository,
+    private readonly sharedContext: SharedContextRepository,
   ) {
     this.apiKey = this.configService.get<string>('OPENROUTER_API_KEY', '');
     this.apiUrl = this.configService.get<string>(
@@ -130,6 +135,7 @@ export class AgentRunnerService {
           set.delete(session.id);
           if (set.size === 0) this.activeSessions.delete(canvasId);
         }
+        this.requestAgentCalled.delete(session.id);
       });
 
     return { sessionId: session.id, agentType: persona.key };
@@ -148,6 +154,7 @@ export class AgentRunnerService {
     payload: AgentInvokePayload,
   ) {
     const persona = getPersona(agentType);
+    const requestDepth = Math.max(0, payload.depth ?? 0);
 
     // Build initial context with existing canvas state (already camelCase from service)
     const canvas = await this.canvasService.findOneWithNodes(canvasId);
@@ -174,6 +181,7 @@ export class AgentRunnerService {
     const edgeToNodeRatio = existingNodes.length > 0
       ? (existingEdges.length / existingNodes.length).toFixed(2)
       : '0.00';
+    const selectedNodeIds = payload.context?.selectedNodeIds ?? [];
 
     // Compute bounding box so the agent knows where free space is
     let spatialHint = 'The canvas is empty — start placing nodes near (0, 0).';
@@ -191,11 +199,23 @@ export class AgentRunnerService {
       ? `\nNote: ${otherActiveCount} other agent(s) are also working on this canvas right now. Avoid placing nodes where they might be working.`
       : '';
 
+    // Collaboration context from recent shared entries and directed requests.
+    const sharedEntries = await this.sharedContext.getRecentEntries(canvasId, {
+      excludeSessionId: sessionId,
+      limit: 15,
+    });
+    const pendingRequests = await this.sharedContext.getOpenRequests(canvasId, agentType, sessionId);
+    const collaborationContext = this.formatCollaborationContext(sharedEntries, pendingRequests);
+
     const canvasContext = [
       `Canvas: "${canvas.title}" (${canvasId})`,
       `You are: ${persona.emoji} ${persona.name}`,
       spatialHint + multiAgentHint,
       `Current edge-to-node ratio: ${edgeToNodeRatio}. If low, prioritize creating more relationships.`,
+      selectedNodeIds.length > 0 ? `Selected reference node IDs: ${JSON.stringify(selectedNodeIds)}` : '',
+      requestDepth > 0
+        ? `Invocation depth: ${requestDepth} (max ${MAX_REQUEST_CHAIN_DEPTH}). Do not create infinite request chains.`
+        : '',
       `Node summaries (${nodeSummaries.length}):`,
       nodeSummaries.length > 0 ? JSON.stringify(nodeSummaries, null, 2) : '(none)',
       `Nodes (${existingNodes.length}):`,
@@ -204,6 +224,7 @@ export class AgentRunnerService {
       existingEdges.length > 0 ? JSON.stringify(existingEdges, null, 2) : '(none)',
       '',
       `User request: ${payload.prompt}`,
+      collaborationContext,
     ].join('\n');
 
     const systemPrompt = buildSystemPrompt(agentType);
@@ -269,7 +290,7 @@ export class AgentRunnerService {
           await this.sleep(TOOL_RATE_LIMIT_MS - elapsed);
         }
 
-        const result = await this.executeTool(canvasId, sessionId, name, args);
+        const result = await this.executeTool(canvasId, sessionId, name, args, agentType, requestDepth);
         lastToolTime = Date.now();
 
         // Record tool call in DB
@@ -308,7 +329,11 @@ export class AgentRunnerService {
     sessionId: string,
     toolName: string,
     args: Record<string, unknown>,
+    agentType: string,
+    requestDepth: number,
   ): Promise<unknown> {
+    const persona = getPersona(agentType);
+
     try {
       switch (toolName) {
         case 'create_node': {
@@ -360,6 +385,95 @@ export class AgentRunnerService {
           return { success: true, deleted: id };
         }
 
+        case 'share_creative_context': {
+          const entryType = args.entryType as SharedContextEntryType;
+          const validTypes: SharedContextEntryType[] = ['theme', 'intention', 'contribution', 'request', 'reaction'];
+          if (!validTypes.includes(entryType)) {
+            return { error: `Invalid entryType: ${String(args.entryType)}` };
+          }
+
+          const content = this.toObject(args.content);
+          const entry = await this.sharedContext.addEntry(canvasId, sessionId, persona.key, entryType, content);
+          const eventType = entryType === 'request'
+            ? 'agent_request'
+            : entryType === 'reaction'
+              ? 'agent_reaction'
+              : 'shared_context';
+
+          this.broadcast.broadcastAgentCollaboration(canvasId, sessionId, {
+            type: eventType,
+            fromAgent: persona.name,
+            toAgent: typeof content.targetPersona === 'string' ? content.targetPersona : undefined,
+            summary: this.buildCollaborationSummary(entryType, content),
+          });
+
+          return { success: true, entry };
+        }
+
+        case 'read_shared_context': {
+          const maybeType = args.entryType as SharedContextEntryType | undefined;
+          const entryType = maybeType && ['theme', 'intention', 'contribution', 'request', 'reaction'].includes(maybeType)
+            ? maybeType
+            : undefined;
+          const limit = typeof args.limit === 'number' ? Math.max(1, Math.min(Math.floor(args.limit), 50)) : 20;
+          const entries = await this.sharedContext.getRecentEntries(canvasId, {
+            entryType,
+            limit,
+            excludeSessionId: sessionId,
+          });
+          return { success: true, entries };
+        }
+
+        case 'request_agent': {
+          if (this.requestAgentCalled.has(sessionId)) {
+            return { error: 'request_agent is limited to one call per session' };
+          }
+
+          if (requestDepth >= MAX_REQUEST_CHAIN_DEPTH) {
+            return { error: `request_agent depth limit reached (${MAX_REQUEST_CHAIN_DEPTH})` };
+          }
+
+          const targetPersona = args.targetPersona as string;
+          const requestPrompt = sanitizeAgentPrompt(typeof args.prompt === 'string' ? args.prompt : '');
+          if (!requestPrompt) {
+            return { error: 'request_agent requires a non-empty prompt' };
+          }
+
+          const refNodeIds = Array.isArray(args.refNodeIds)
+            ? args.refNodeIds.filter((id): id is string => typeof id === 'string').slice(0, 20)
+            : [];
+          const requestContent: Record<string, unknown> = {
+            targetPersona,
+            ask: requestPrompt,
+            refNodeIds,
+          };
+
+          await this.sharedContext.addEntry(canvasId, sessionId, persona.key, 'request', requestContent);
+
+          try {
+            const invoked = await this.invoke(canvasId, {
+              prompt: `Requested by ${persona.name}: ${requestPrompt}`,
+              agentType: targetPersona,
+              depth: requestDepth + 1,
+              context: {
+                selectedNodeIds: refNodeIds,
+              },
+            });
+            this.requestAgentCalled.add(sessionId);
+            this.broadcast.broadcastAgentCollaboration(canvasId, sessionId, {
+              type: 'agent_request',
+              fromAgent: persona.name,
+              toAgent: targetPersona,
+              summary: `Requested ${targetPersona} to: ${requestPrompt.slice(0, 180)}`,
+            });
+
+            return { success: true, targetPersona, invokedSessionId: invoked.sessionId };
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { error: `Failed to invoke ${targetPersona}: ${message}` };
+          }
+        }
+
         default:
           return { error: `Unknown tool: ${toolName}` };
       }
@@ -378,6 +492,58 @@ export class AgentRunnerService {
     if (!raw) return '(no textual content)';
     const singleLine = raw.replace(/\s+/g, ' ').trim();
     return singleLine.length > 120 ? `${singleLine.slice(0, 120)}...` : singleLine;
+  }
+
+  private formatCollaborationContext(
+    sharedEntries: Array<{ agentName: string; entryType: string; content: Record<string, unknown> }>,
+    pendingRequests: Array<{ agentName: string; content: Record<string, unknown> }>,
+  ): string {
+    let context = '';
+
+    if (sharedEntries.length > 0) {
+      context += '\n## Creative context from other agents:\n';
+      for (const entry of sharedEntries) {
+        context += `- [${entry.agentName}] (${entry.entryType}): ${JSON.stringify(entry.content)}\n`;
+      }
+    }
+
+    if (pendingRequests.length > 0) {
+      context += '\n## Requests directed at you:\n';
+      for (const req of pendingRequests) {
+        context += `- [${req.agentName}] asks: ${JSON.stringify(req.content)}\n`;
+      }
+      context += '\nPlease address these requests in your work if relevant.\n';
+    }
+
+    if (!context) return '';
+    if (context.length <= MAX_SHARED_CONTEXT_CHARS) return context;
+    return `${context.slice(0, MAX_SHARED_CONTEXT_CHARS)}\n...(truncated for context limits)\n`;
+  }
+
+  private toObject(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private buildCollaborationSummary(entryType: SharedContextEntryType, content: Record<string, unknown>): string {
+    if (entryType === 'request') {
+      const ask = typeof content.ask === 'string' ? content.ask : 'requested help';
+      return ask.length > 160 ? `${ask.slice(0, 160)}...` : ask;
+    }
+    if (entryType === 'reaction') {
+      const response = typeof content.response === 'string' ? content.response : 'shared a reaction';
+      return response.length > 160 ? `${response.slice(0, 160)}...` : response;
+    }
+    const summary = typeof content.summary === 'string'
+      ? content.summary
+      : typeof content.plan === 'string'
+        ? content.plan
+        : typeof content.mood === 'string'
+          ? `Shared mood: ${content.mood}`
+          : `Shared ${entryType}`;
+    return summary.length > 160 ? `${summary.slice(0, 160)}...` : summary;
   }
 
   private async callLLM(

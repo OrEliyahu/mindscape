@@ -52,3 +52,20 @@ jobs:
       - name: Typecheck API
         working-directory: apps/api
         run: npx tsc --noEmit
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run API tests
+        working-directory: apps/api
+        run: npx jest --ci --forceExit

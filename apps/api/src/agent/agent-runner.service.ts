@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NodesService } from '../nodes/nodes.service';
 import { EdgesService } from '../edges/edges.service';
 import { CanvasService } from '../canvas/canvas.service';
+import { SnapshotService } from '../canvas/snapshot.service';
 import { AgentBroadcastService } from '../collaboration/agent-broadcast.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { toolsToOpenRouterFormat } from './agent-tools';
@@ -58,6 +59,7 @@ export class AgentRunnerService {
     private readonly nodesService: NodesService,
     private readonly edgesService: EdgesService,
     private readonly canvasService: CanvasService,
+    private readonly snapshotService: SnapshotService,
     private readonly broadcast: AgentBroadcastService,
     private readonly sessions: AgentSessionRepository,
   ) {
@@ -129,6 +131,17 @@ export class AgentRunnerService {
     payload: AgentInvokePayload,
   ) {
     const persona = getPersona(agentType);
+
+    // Auto-snapshot before agent starts working
+    try {
+      await this.snapshotService.capture(canvasId, {
+        label: `Before ${persona.name} session`,
+        sessionId,
+      });
+      this.logger.log(`Auto-snapshot captured for canvas ${canvasId}`);
+    } catch (err) {
+      this.logger.warn(`Failed to capture auto-snapshot: ${err instanceof Error ? err.message : err}`);
+    }
 
     // Build initial context with existing canvas state (already camelCase from service)
     const canvas = await this.canvasService.findOneWithNodes(canvasId);

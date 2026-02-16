@@ -10,29 +10,29 @@ const DEFAULT_ACTION_INTERVAL_MS = 45000;
 
 const PERSONA_PROMPT_TEMPLATES: Record<string, string[]> = {
   brainstormer: [
-    'Add a burst of surprising idea clusters around one existing concept and connect them with labeled links.',
-    'Create a playful branch of alternatives that challenge assumptions and relate it to prior nodes.',
-    'Introduce fresh what-if ideas in a radial layout with concise sticky notes and clear relationship edges.',
+    'Create a dreamy cluster of unexpected creative motifs (imagery, mood, metaphor) and connect them as echoes.',
+    'Expand one existing node into a playful idea constellation with colorful contrast and lyrical labels.',
+    'Add an imaginative what-if branch like an artist sketchbook spread, with emotional cross-links.',
   ],
   architect: [
-    'Expand the canvas with a layered architecture section and map dependencies between components.',
-    'Add a structured subsystem diagram with boundaries, interfaces, and directional data-flow edges.',
-    'Organize a hub-and-spoke technical layout that extends existing structures without overlaps.',
+    'Paint a layered visual scene (foreground/midground/background) using descriptive nodes and compositional edges.',
+    'Design a mini gallery-wall composition that balances color, scale, and movement across nearby space.',
+    'Add a mood-board zone with connected visual anchors that guide the viewer eye smoothly.',
   ],
   coder: [
-    'Contribute implementation-focused code and explanation nodes, then connect logic and data flow.',
-    'Add code-first nodes for one feature path, include concise notes, and wire references with labeled edges.',
-    'Build a mini coding sequence from setup to result, balancing code snippets and explanatory text.',
+    'Write a short lyric sequence (verse to chorus) and connect transitions as musical flow.',
+    'Add song fragments with hooks, imagery, and refrain links so the cluster feels like a living song sketch.',
+    'Compose a rhythm-focused micro-story in lyric form using concise lines and evocative transitions.',
   ],
   analyst: [
-    'Add a compact analysis chain from observation to inference to recommendation with explicit connections.',
-    'Create a comparison section with tradeoffs and tie it into existing decision nodes.',
-    'Expand the map with cause-effect analysis nodes and connect supporting evidence paths.',
+    'Create a narrative arc (setup, tension, climax, release) and connect beats with story-relation labels.',
+    'Add a character or scene progression branch and tie it into existing themes.',
+    'Expand the canvas with a poetic mini-story that flows through mood shifts and visual cues.',
   ],
   'canvas-agent': [
-    'Improve the overall canvas composition by adding meaningful nodes and edges where structure is weak.',
-    'Extend an existing topic cluster with complementary details and cohesive linking edges.',
-    'Fill empty space with a thoughtfully connected sub-map that builds on current content.',
+    'Improve the canvas as a living artwork: add expressive nodes, rich color variation, and thematic links.',
+    'Extend an existing creative cluster with painterly detail, lyrical phrases, and cohesive emotional flow.',
+    'Fill an empty area with a small artistic vignette connected to nearby motifs.',
   ],
 };
 

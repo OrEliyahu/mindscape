@@ -77,7 +77,7 @@ function toText(node: NodePayload): string {
   return node.type.replace(/_/g, ' ');
 }
 
-function shapeElementFromNode(node: NodePayload) {
+function shapeElementFromNode(node: NodePayload, opacity = 100) {
   return {
     ...baseElement(
       `${node.id}__shape`,
@@ -88,10 +88,11 @@ function shapeElementFromNode(node: NodePayload) {
       Math.max(60, node.height),
     ),
     backgroundColor: NODE_COLORS[node.type] ?? '#ffffff',
+    opacity,
   };
 }
 
-function textElementFromNode(node: NodePayload) {
+function textElementFromNode(node: NodePayload, opacity = 100) {
   return {
     ...baseElement(
       `${node.id}__text`,
@@ -104,6 +105,7 @@ function textElementFromNode(node: NodePayload) {
     strokeColor: NODE_TEXT_COLORS[node.type] ?? '#111827',
     backgroundColor: 'transparent',
     roughness: 1,
+    opacity,
     text: toText(node),
     fontSize: node.type === 'code_block' ? 16 : 20,
     fontFamily: 1,
@@ -152,13 +154,18 @@ function arrowElementFromEdge(
   };
 }
 
-export function mapCanvasToExcalidrawElements(nodes: NodePayload[], edges: EdgePayload[]): ReadonlyArray<Record<string, unknown>> {
+export function mapCanvasToExcalidrawElements(
+  nodes: NodePayload[],
+  edges: EdgePayload[],
+  nodeOpacityById?: Map<string, number>,
+): ReadonlyArray<Record<string, unknown>> {
   const elements: Array<Record<string, unknown>> = [];
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
 
   for (const node of nodes) {
-    elements.push(shapeElementFromNode(node));
-    elements.push(textElementFromNode(node));
+    const opacity = nodeOpacityById?.get(node.id) ?? 100;
+    elements.push(shapeElementFromNode(node, opacity));
+    elements.push(textElementFromNode(node, opacity));
   }
 
   for (const edge of edges) {

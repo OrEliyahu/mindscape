@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ExcalidrawImperativeAPI, AppState } from '@excalidraw/excalidraw/types';
 import { useCanvasStore } from '@/stores/canvas-store';
@@ -18,9 +18,24 @@ const ExcalidrawView = dynamic(() => import('./ExcalidrawView'), { ssr: false })
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const CURSOR_FADE_MS = 3000;
+const AUTO_FOLLOW_COOLDOWN_MS = 10000;
+const AUTO_FOLLOW_DURATION_MS = 2000;
+const NODE_ENTRANCE_MS = 500;
+
+interface CursorState {
+  x: number;
+  y: number;
+  timestamp: number;
+}
 
 export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const initializedNodesRef = useRef(false);
+  const knownNodeIdsRef = useRef<Set<string>>(new Set());
+  const lastPanAtRef = useRef(0);
+  const isAutoFollowingRef = useRef(false);
+  const followAnimationRef = useRef<number | null>(null);
+  const lastScrollRef = useRef<{ x: number; y: number } | null>(null);
 
   useCanvasSocket(canvasId);
 
@@ -36,6 +51,8 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   const [personas, setPersonas] = useState<AgentPersona[]>([]);
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [tick, setTick] = useState(0);
+  const [interpolatedCursors, setInterpolatedCursors] = useState<Map<string, CursorState>>(new Map());
+  const [nodeEntranceStarts, setNodeEntranceStarts] = useState<Map<string, number>>(new Map());
 
   const nodeArray = useMemo(() => Array.from(nodes.values()), [nodes]);
   const edgeArray = useMemo(() => Array.from(edges.values()), [edges]);
@@ -109,28 +126,178 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
     const ticker = window.setInterval(() => {
       setTick((value) => value + 1);
       pruneStaleAgentCursors(CURSOR_FADE_MS);
-    }, 500);
+    }, 100);
 
     return () => window.clearInterval(ticker);
   }, [pruneStaleAgentCursors]);
 
+  useEffect(() => {
+    let mounted = true;
+    let rafId = 0;
+
+    const animate = () => {
+      if (!mounted) return;
+
+      setInterpolatedCursors((current) => {
+        const now = Date.now();
+        const next = new Map<string, CursorState>();
+
+        for (const [sessionId, cursor] of agentCursors.entries()) {
+          const prev = current.get(sessionId);
+          const startX = prev?.x ?? cursor.x;
+          const startY = prev?.y ?? cursor.y;
+          const x = startX + (cursor.x - startX) * 0.2;
+          const y = startY + (cursor.y - startY) * 0.2;
+          next.set(sessionId, { x, y, timestamp: cursor.timestamp || now });
+        }
+
+        return next;
+      });
+
+      rafId = window.requestAnimationFrame(animate);
+    };
+
+    rafId = window.requestAnimationFrame(animate);
+    return () => {
+      mounted = false;
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [agentCursors]);
+
+  useEffect(() => {
+    setNodeEntranceStarts((previous) => {
+      const next = new Map(previous);
+      const now = Date.now();
+
+      for (const node of nodeArray) {
+        if (!next.has(node.id)) {
+          next.set(node.id, now);
+        }
+      }
+
+      for (const nodeId of next.keys()) {
+        if (!nodes.has(nodeId)) next.delete(nodeId);
+      }
+
+      return next;
+    });
+  }, [nodeArray, nodes]);
+
+  const animateCameraToNode = useCallback((nodeId: string) => {
+    const api = excalidrawApiRef.current;
+    const node = nodes.get(nodeId);
+    if (!api || !node) return;
+
+    const now = Date.now();
+    if (now - lastPanAtRef.current < AUTO_FOLLOW_COOLDOWN_MS) return;
+
+    const appState = api.getAppState();
+    const fromX = appState.scrollX;
+    const fromY = appState.scrollY;
+    const viewportWidth = appState.width || window.innerWidth;
+    const viewportHeight = appState.height || window.innerHeight;
+    const toX = viewportWidth / 2 - (node.positionX + node.width / 2);
+    const toY = viewportHeight / 2 - (node.positionY + node.height / 2);
+
+    if (followAnimationRef.current !== null) {
+      window.cancelAnimationFrame(followAnimationRef.current);
+    }
+
+    const startAt = performance.now();
+    isAutoFollowingRef.current = true;
+
+    const step = (time: number) => {
+      const elapsed = time - startAt;
+      const progress = Math.min(1, elapsed / AUTO_FOLLOW_DURATION_MS);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const scrollX = fromX + (toX - fromX) * eased;
+      const scrollY = fromY + (toY - fromY) * eased;
+
+      api.updateScene({ appState: { scrollX, scrollY } as never });
+      setViewport({ x: scrollX, y: scrollY, zoom: appState.zoom.value });
+
+      if (progress < 1) {
+        followAnimationRef.current = window.requestAnimationFrame(step);
+      } else {
+        isAutoFollowingRef.current = false;
+        followAnimationRef.current = null;
+      }
+    };
+
+    followAnimationRef.current = window.requestAnimationFrame(step);
+  }, [nodes, setViewport]);
+
+  useEffect(() => {
+    if (!initializedNodesRef.current) {
+      knownNodeIdsRef.current = new Set(nodeArray.map((node) => node.id));
+      initializedNodesRef.current = true;
+      return;
+    }
+
+    const known = knownNodeIdsRef.current;
+    const nextKnown = new Set(known);
+    let latestCreatedNodeId: string | null = null;
+
+    for (const node of nodeArray) {
+      if (!known.has(node.id)) {
+        latestCreatedNodeId = node.id;
+        nextKnown.add(node.id);
+      }
+    }
+
+    for (const id of Array.from(nextKnown)) {
+      if (!nodes.has(id)) nextKnown.delete(id);
+    }
+
+    knownNodeIdsRef.current = nextKnown;
+
+    if (latestCreatedNodeId) {
+      animateCameraToNode(latestCreatedNodeId);
+    }
+  }, [animateCameraToNode, nodeArray, nodes]);
+
+  useEffect(() => {
+    return () => {
+      if (followAnimationRef.current !== null) {
+        window.cancelAnimationFrame(followAnimationRef.current);
+      }
+    };
+  }, []);
+
+  const nodeOpacityById = useMemo(() => {
+    const now = Date.now();
+    const opacity = new Map<string, number>();
+
+    for (const node of nodeArray) {
+      const startedAt = nodeEntranceStarts.get(node.id);
+      if (!startedAt) {
+        opacity.set(node.id, 100);
+        continue;
+      }
+      const progress = Math.min(1, (now - startedAt) / NODE_ENTRANCE_MS);
+      opacity.set(node.id, Math.max(0, Math.round(progress * 100)));
+    }
+
+    return opacity;
+  }, [nodeArray, nodeEntranceStarts, tick]);
+
   const sceneElements = useMemo(
-    () => mapCanvasToExcalidrawElements(nodeArray, edgeArray),
-    [edgeArray, nodeArray],
+    () => mapCanvasToExcalidrawElements(nodeArray, edgeArray, nodeOpacityById),
+    [edgeArray, nodeArray, nodeOpacityById],
   );
 
   const collaborators = useMemo(() => {
     const now = Date.now();
-    const cursorEntries = Array.from(agentCursors.values())
-      .map((cursor) => {
+    const cursorEntries = Array.from(interpolatedCursors.entries())
+      .map(([sessionId, cursor]) => {
         const age = now - cursor.timestamp;
         if (age > CURSOR_FADE_MS) return null;
 
-        const session = sessionById.get(cursor.sessionId);
+        const session = sessionById.get(sessionId);
         const persona = session ? personasByKey.get(session.agentName) : undefined;
 
         return {
-          sessionId: cursor.sessionId,
+          sessionId,
           x: cursor.x,
           y: cursor.y,
           updatedAt: cursor.timestamp,
@@ -141,7 +308,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
     return mapAgentCursorsToCollaborators(cursorEntries);
-  }, [agentCursors, personasByKey, sessionById, tick]);
+  }, [interpolatedCursors, personasByKey, sessionById, tick]);
 
   useEffect(() => {
     if (!excalidrawApiRef.current) return;
@@ -153,6 +320,15 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   }, [sceneElements, collaborators]);
 
   const handleExcalidrawChange = (appState: AppState) => {
+    const previous = lastScrollRef.current;
+    const changed = !previous || Math.abs(previous.x - appState.scrollX) > 0.5 || Math.abs(previous.y - appState.scrollY) > 0.5;
+
+    if (!isAutoFollowingRef.current && changed) {
+      lastPanAtRef.current = Date.now();
+    }
+
+    lastScrollRef.current = { x: appState.scrollX, y: appState.scrollY };
+
     setViewport({
       x: appState.scrollX,
       y: appState.scrollY,

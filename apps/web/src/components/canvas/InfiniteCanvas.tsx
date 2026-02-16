@@ -175,15 +175,16 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
           top: 16,
           left: 16,
           zIndex: 10,
-          background: 'rgba(255,255,255,0.9)',
+          background: 'rgba(255,255,255,0.7)',
+          backdropFilter: 'blur(10px)',
           border: '1px solid rgba(148, 163, 184, 0.3)',
-          padding: '10px 14px',
-          borderRadius: 12,
-          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+          padding: '0.38rem 0.72rem',
+          borderRadius: 999,
+          boxShadow: '0 6px 16px rgba(15, 23, 42, 0.08)',
           display: 'flex',
           alignItems: 'center',
-          gap: 10,
-          fontSize: '0.82rem',
+          gap: 8,
+          fontSize: '0.75rem',
         }}
       >
         <strong>{canvasTitle}</strong>
@@ -192,12 +193,12 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
             width: 8,
             height: 8,
             borderRadius: '50%',
-            background: connected ? '#10B981' : '#EF4444',
+            background: '#10B981',
             display: 'inline-block',
           }}
         />
         <span style={{ color: '#475569' }}>
-          {agentCount} agent{agentCount !== 1 ? 's' : ''} · {viewerCount} viewer{viewerCount !== 1 ? 's' : ''}
+          {agentCount} agents · {viewerCount} viewers
         </span>
       </div>
 

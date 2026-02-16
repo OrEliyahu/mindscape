@@ -95,6 +95,9 @@ export function useCanvasSocket(canvasId: string) {
     socket.on('agent:error', (data) =>
       pushAgentActivity({ sessionId: data.sessionId, type: 'error', data: data.error, timestamp: Date.now() }),
     );
+    socket.on('agent:collaboration', (data) =>
+      pushAgentActivity({ sessionId: data.sessionId, type: 'collaboration', data, timestamp: Date.now() }),
+    );
     socket.on('agent:cursor', (data) =>
       upsertAgentCursor({ sessionId: data.sessionId, x: data.x, y: data.y, timestamp: Date.now() }),
     );

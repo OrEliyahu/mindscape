@@ -17,11 +17,17 @@ describe('AgentRunnerService integration', () => {
     broadcastNodeDeleted: jest.fn(),
     broadcastEdgeCreated: jest.fn(),
     broadcastEdgeDeleted: jest.fn(),
+    broadcastAgentCollaboration: jest.fn(),
   };
   const sessions = {
     create: jest.fn(),
     updateStatus: jest.fn(),
     appendToolCall: jest.fn(),
+  };
+  const sharedContext = {
+    getRecentEntries: jest.fn().mockResolvedValue([]),
+    getOpenRequests: jest.fn().mockResolvedValue([]),
+    addEntry: jest.fn(),
   };
 
   let service: AgentRunnerService;
@@ -40,6 +46,7 @@ describe('AgentRunnerService integration', () => {
       canvasService as any,
       broadcast as any,
       sessions as any,
+      sharedContext as any,
     );
 
     (service as any).runAgentLoop = jest.fn().mockResolvedValue(undefined);

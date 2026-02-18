@@ -300,7 +300,16 @@ export class AgentRunnerService {
         this.broadcast.broadcastAgentToolCall(canvasId, sessionId, name, args, result);
 
         // Broadcast cursor position when creating/updating nodes
-        if ((name === 'create_node' || name === 'update_node') && args.positionX != null && args.positionY != null) {
+        if (
+          (name === 'create_node' ||
+            name === 'update_node' ||
+            name === 'create_path' ||
+            name === 'create_gradient_shape' ||
+            name === 'create_text_art' ||
+            name === 'import_svg') &&
+          args.positionX != null &&
+          args.positionY != null
+        ) {
           this.broadcast.broadcastAgentCursor(
             canvasId,
             sessionId,
@@ -349,6 +358,76 @@ export class AgentRunnerService {
           });
           this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
           return { success: true, nodeId: node.id };
+        }
+
+        case 'create_path': {
+          const node = await this.nodesService.create(canvasId, {
+            type: 'path',
+            positionX: args.positionX as number | undefined,
+            positionY: args.positionY as number | undefined,
+            width: args.width as number | undefined,
+            height: args.height as number | undefined,
+            content: {
+              ...(this.toObject(args.content)),
+              pathData: args.pathData,
+            },
+            style: {
+              ...(this.toObject(args.style)),
+              path: args.pathData,
+            },
+            createdBy: undefined,
+          });
+          this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
+          return { success: true, nodeId: node.id, type: 'path' };
+        }
+
+        case 'create_gradient_shape': {
+          const node = await this.nodesService.create(canvasId, {
+            type: 'gradient_shape',
+            positionX: args.positionX as number | undefined,
+            positionY: args.positionY as number | undefined,
+            width: args.width as number | undefined,
+            height: args.height as number | undefined,
+            content: this.toObject(args.content),
+            style: this.toObject(args.style),
+            createdBy: undefined,
+          });
+          this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
+          return { success: true, nodeId: node.id, type: 'gradient_shape' };
+        }
+
+        case 'create_text_art': {
+          const node = await this.nodesService.create(canvasId, {
+            type: 'text_art',
+            positionX: args.positionX as number | undefined,
+            positionY: args.positionY as number | undefined,
+            width: args.width as number | undefined,
+            height: args.height as number | undefined,
+            content: {
+              text: args.text,
+            },
+            style: this.toObject(args.style),
+            createdBy: undefined,
+          });
+          this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
+          return { success: true, nodeId: node.id, type: 'text_art' };
+        }
+
+        case 'import_svg': {
+          const node = await this.nodesService.create(canvasId, {
+            type: 'svg',
+            positionX: args.positionX as number | undefined,
+            positionY: args.positionY as number | undefined,
+            width: args.width as number | undefined,
+            height: args.height as number | undefined,
+            content: {
+              svg: args.svg,
+            },
+            style: this.toObject(args.style),
+            createdBy: undefined,
+          });
+          this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
+          return { success: true, nodeId: node.id, type: 'svg' };
         }
 
         case 'update_node': {

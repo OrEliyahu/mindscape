@@ -5,37 +5,11 @@ import { CanvasService } from '../canvas/canvas.service';
 import { AgentRunnerService } from './agent-runner.service';
 import { listPersonas } from './agent-registry';
 import { SharedContextRepository } from './shared-context.repository';
+import { AgentPromptService } from './agent-prompt.service';
+import { DEFAULT_SCHEDULER_PROMPT_TEMPLATES } from './agent-prompt-defaults';
 
 const CHECK_INTERVAL_MS = 5000;
 const DEFAULT_ACTION_INTERVAL_MS = 45000;
-
-const PERSONA_PROMPT_TEMPLATES: Record<string, string[]> = {
-  brainstormer: [
-    'Create a dreamy cluster of unexpected creative motifs (imagery, mood, metaphor) and connect them as echoes. Include at least one freeform path or gradient shape.',
-    'Expand one existing node into a playful idea constellation with colorful contrast and lyrical labels, using expressive text styling.',
-    'Add an imaginative what-if branch like an artist sketchbook spread, with emotional cross-links.',
-  ],
-  architect: [
-    'Paint a layered visual scene (foreground/midground/background) using descriptive nodes, gradient treatments, and compositional edges.',
-    'Design a mini gallery-wall composition that balances color, scale, and movement across nearby space.',
-    'Add a mood-board zone with connected visual anchors that guide the viewer eye smoothly.',
-  ],
-  coder: [
-    'Write a short lyric sequence (verse to chorus) and connect transitions as musical flow.',
-    'Add song fragments with hooks, imagery, and refrain links so the cluster feels like a living song sketch.',
-    'Compose a rhythm-focused micro-story in lyric form using concise lines and evocative transitions.',
-  ],
-  analyst: [
-    'Create a narrative arc (setup, tension, climax, release) and connect beats with story-relation labels.',
-    'Add a character or scene progression branch and tie it into existing themes.',
-    'Expand the canvas with a poetic mini-story that flows through mood shifts and visual cues.',
-  ],
-  'canvas-agent': [
-    'Improve the canvas as a living artwork: add expressive nodes, rich color variation, and thematic links. Prefer creative styles over plain defaults.',
-    'Extend an existing creative cluster with painterly detail, lyrical phrases, and cohesive emotional flow.',
-    'Fill an empty area with a small artistic vignette connected to nearby motifs.',
-  ],
-};
 
 @Injectable()
 export class AgentSchedulerService {
@@ -49,6 +23,7 @@ export class AgentSchedulerService {
     private readonly canvasService: CanvasService,
     private readonly agentRunner: AgentRunnerService,
     private readonly sharedContext: SharedContextRepository,
+    private readonly promptService: AgentPromptService,
   ) {
     this.enabled = this.configService.get<string>('AGENT_SCHEDULER_ENABLED', 'true') === 'true';
     this.actionIntervalMs = this.configService.get<number>(
@@ -84,7 +59,7 @@ export class AgentSchedulerService {
 
     const prompt = directedRequest
       ? this.buildRequestPrompt(directedRequest)
-      : this.pickPrompt(persona.key);
+      : await this.pickPrompt(persona.key);
 
     try {
       await this.agentRunner.invoke(canvas.id, {
@@ -99,9 +74,15 @@ export class AgentSchedulerService {
     }
   }
 
-  private pickPrompt(personaKey: string): string {
-    const prompts = PERSONA_PROMPT_TEMPLATES[personaKey] ?? PERSONA_PROMPT_TEMPLATES['canvas-agent'];
-    return `${prompts[Math.floor(Math.random() * prompts.length)]} Check shared context and respond to pending requests if relevant.`;
+  private async pickPrompt(personaKey: string): Promise<string> {
+    const prompts = await this.promptService.getSchedulerPrompts(personaKey);
+    const safePrompts = prompts.length > 0 ? prompts : (DEFAULT_SCHEDULER_PROMPT_TEMPLATES[personaKey]
+      ?? DEFAULT_SCHEDULER_PROMPT_TEMPLATES['canvas-agent']);
+    const selected = safePrompts[Math.floor(Math.random() * safePrompts.length)];
+    if (!selected) {
+      return 'Extend the canvas with interesting creative work and check shared context first.';
+    }
+    return `${selected} Check shared context and respond to pending requests if relevant.`;
   }
 
   private buildRequestPrompt(request: {

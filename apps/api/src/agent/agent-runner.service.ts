@@ -6,8 +6,9 @@ import { CanvasService } from '../canvas/canvas.service';
 import { AgentBroadcastService } from '../collaboration/agent-broadcast.service';
 import { AgentSessionRepository } from './agent-session.repository';
 import { SharedContextRepository } from './shared-context.repository';
+import { AgentPromptService } from './agent-prompt.service';
 import { toolsToOpenRouterFormat } from './agent-tools';
-import { buildSystemPrompt, getPersona, DEFAULT_PERSONA_KEY } from './agent-registry';
+import { getPersona, DEFAULT_PERSONA_KEY } from './agent-registry';
 import { toNodePayload, toEdgePayload } from '../common/mappers';
 import { sanitizeAgentPrompt } from '../common/utils/sanitize-agent-prompt';
 import type { AgentInvokePayload, NodePayload, EdgePayload, SharedContextEntryType } from '@mindscape/shared';
@@ -41,6 +42,7 @@ const MAX_CONCURRENT_SESSIONS_PER_CANVAS = 3;
 const TOOL_RATE_LIMIT_MS = 500; // minimum ms between tool executions
 const MAX_REQUEST_CHAIN_DEPTH = 3;
 const MAX_SHARED_CONTEXT_CHARS = 8000;
+const CREATIVE_TOOL_NAMES = new Set(['create_path', 'create_gradient_shape', 'create_text_art', 'import_svg']);
 
 /**
  * Executes an AI agent on a canvas.
@@ -66,6 +68,7 @@ export class AgentRunnerService {
     private readonly broadcast: AgentBroadcastService,
     private readonly sessions: AgentSessionRepository,
     private readonly sharedContext: SharedContextRepository,
+    private readonly promptService: AgentPromptService,
   ) {
     this.apiKey = this.configService.get<string>('OPENROUTER_API_KEY', '');
     this.apiUrl = this.configService.get<string>(
@@ -227,7 +230,7 @@ export class AgentRunnerService {
       collaborationContext,
     ].join('\n');
 
-    const systemPrompt = buildSystemPrompt(agentType);
+    const systemPrompt = await this.promptService.buildSystemPrompt(agentType);
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: canvasContext },
@@ -235,6 +238,7 @@ export class AgentRunnerService {
 
     const tools = toolsToOpenRouterFormat();
     let lastToolTime = 0;
+    let creativePrimitiveUsed = false;
 
     // Agent loop: call LLM → execute tools → repeat
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -292,6 +296,9 @@ export class AgentRunnerService {
 
         const result = await this.executeTool(canvasId, sessionId, name, args, agentType, requestDepth);
         lastToolTime = Date.now();
+        if (this.didUseCreativePrimitive(name, args)) {
+          creativePrimitiveUsed = true;
+        }
 
         // Record tool call in DB
         await this.sessions.appendToolCall(sessionId, { tool: name, args, result });
@@ -327,6 +334,16 @@ export class AgentRunnerService {
       }
     }
 
+    if (!creativePrimitiveUsed) {
+      const fallback = await this.createFallbackCreativeNode(canvasId, persona.color);
+      await this.sessions.appendToolCall(sessionId, {
+        tool: 'create_path',
+        args: { fallback: true },
+        result: fallback,
+      });
+      this.broadcast.broadcastAgentToolCall(canvasId, sessionId, 'create_path', { fallback: true }, fallback);
+    }
+
     // Done
     await this.sessions.updateStatus(sessionId, 'idle');
     this.broadcast.broadcastAgentStatus(canvasId, sessionId, 'idle');
@@ -346,14 +363,15 @@ export class AgentRunnerService {
     try {
       switch (toolName) {
         case 'create_node': {
+          const type = (args.type as string) ?? 'sticky_note';
           const node = await this.nodesService.create(canvasId, {
-            type: (args.type as string) ?? 'sticky_note',
+            type,
             positionX: args.positionX as number | undefined,
             positionY: args.positionY as number | undefined,
             width: args.width as number | undefined,
             height: args.height as number | undefined,
             content: args.content as Record<string, unknown> | undefined,
-            style: args.style as Record<string, unknown> | undefined,
+            style: this.withExpressiveDefaults(type, args.style as Record<string, unknown> | undefined, persona.color),
             createdBy: undefined, // agents aren't users — skip FK
           });
           this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
@@ -655,5 +673,79 @@ export class AgentRunnerService {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private didUseCreativePrimitive(toolName: string, args: Record<string, unknown>): boolean {
+    if (CREATIVE_TOOL_NAMES.has(toolName)) return true;
+    if (toolName !== 'create_node') return false;
+    const type = typeof args.type === 'string' ? args.type : '';
+    return ['path', 'svg', 'gradient_shape', 'text_art'].includes(type);
+  }
+
+  private withExpressiveDefaults(
+    nodeType: string,
+    style: Record<string, unknown> | undefined,
+    personaColor: string,
+  ): Record<string, unknown> {
+    const input = style ?? {};
+    const defaults: Record<string, unknown> = {
+      borderRadius: nodeType === 'text_art' ? 2 : 14,
+      strokeWidth: 1.8,
+      borderColor: 'rgba(51,65,85,0.22)',
+      textColor: '#0f172a',
+      shadow: {
+        color: 'rgba(15,23,42,0.16)',
+        blur: 10,
+        offsetX: 2,
+        offsetY: 2,
+      },
+    };
+
+    if (nodeType === 'gradient_shape' || nodeType === 'shape') {
+      defaults.gradient = {
+        type: 'linear',
+        colorStops: {
+          '0': `${personaColor}33`,
+          '1': `${personaColor}99`,
+        },
+      };
+    }
+
+    if (nodeType === 'text_art') {
+      defaults.fontSize = 28;
+      defaults.fontFamily = 'Georgia, serif';
+      defaults.backgroundColor = 'transparent';
+      defaults.textColor = personaColor;
+    }
+
+    return { ...defaults, ...input };
+  }
+
+  private async createFallbackCreativeNode(canvasId: string, personaColor: string) {
+    const size = 180;
+    const offset = Math.floor(Math.random() * 220) - 110;
+    const node = await this.nodesService.create(canvasId, {
+      type: 'path',
+      positionX: offset,
+      positionY: offset,
+      width: size,
+      height: size,
+      content: {
+        title: '',
+        text: '',
+        pathData: `M 20 100 C 60 10, 120 190, 160 100`,
+      },
+      style: {
+        path: `M 20 100 C 60 10, 120 190, 160 100`,
+        borderColor: personaColor,
+        strokeWidth: 4,
+        backgroundColor: 'transparent',
+        opacity: 1,
+      },
+      createdBy: undefined,
+    });
+
+    this.broadcast.broadcastNodeCreated(canvasId, toNodePayload(node));
+    return { success: true, nodeId: node.id, type: 'path', fallback: true };
   }
 }

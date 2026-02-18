@@ -17,9 +17,14 @@ const DEFAULT_NODE_BG = '#ffffff';
 const DEFAULT_NODE_BORDER = '#e2e8f0';
 const DEFAULT_TEXT = '#0f172a';
 
+function isAbstractVisualNode(node: NodePayload): boolean {
+  return ['shape', 'path', 'svg', 'gradient_shape'].includes(node.type);
+}
+
 function nodeText(node: NodePayload): string {
   if (typeof node.content?.text === 'string' && node.content.text.length > 0) return node.content.text;
   if (typeof node.content?.title === 'string' && node.content.title.length > 0) return node.content.title;
+  if (isAbstractVisualNode(node)) return '';
   return node.type.replace(/_/g, ' ');
 }
 
@@ -94,6 +99,37 @@ function createNodeShape(node: NodePayload): Rect | Path {
     });
   }
 
+  if (node.type === 'shape' || node.type === 'gradient_shape') {
+    const pathData = `M ${width * 0.5} 0 
+      L ${width} ${height * 0.5}
+      L ${width * 0.5} ${height}
+      L 0 ${height * 0.5} z`;
+    return new Path(pathData, {
+      left: 0,
+      top: 0,
+      fill,
+      stroke: style.borderColor ?? DEFAULT_NODE_BORDER,
+      strokeWidth: numberStyle(style.strokeWidth, 1.8),
+      opacity: numberStyle(style.opacity, 1),
+      shadow,
+      objectCaching: true,
+    });
+  }
+
+  if (node.type === 'text_art') {
+    return new Rect({
+      left: 0,
+      top: 0,
+      width,
+      height,
+      rx: numberStyle(style.borderRadius, 0),
+      ry: numberStyle(style.borderRadius, 0),
+      fill: 'transparent',
+      stroke: 'transparent',
+      opacity: numberStyle(style.opacity, 1),
+    });
+  }
+
   return new Rect({
     left: 0,
     top: 0,
@@ -114,21 +150,28 @@ function createNodeText(node: NodePayload): Textbox {
   const style = node.style ?? {};
 
   return new Textbox(nodeText(node), {
-    left: 14,
-    top: 12,
+    left: node.type === 'text_art' ? 6 : 14,
+    top: node.type === 'text_art' ? 6 : 12,
     width,
-    fontSize: numberStyle(style.fontSize, node.type === 'code_block' ? 16 : 20),
-    fontFamily: typeof style.fontFamily === 'string' ? style.fontFamily : 'ui-sans-serif',
+    fontSize: numberStyle(style.fontSize, node.type === 'text_art' ? 36 : node.type === 'code_block' ? 16 : 20),
+    fontFamily: typeof style.fontFamily === 'string' ? style.fontFamily : node.type === 'text_art' ? 'Georgia, serif' : 'ui-sans-serif',
     fill: typeof style.textColor === 'string' ? style.textColor : DEFAULT_TEXT,
-    textAlign: 'left',
+    textAlign: node.type === 'text_art' ? 'center' : 'left',
     selectable: false,
     evented: false,
-    lineHeight: 1.25,
+    lineHeight: node.type === 'text_art' ? 1.08 : 1.25,
+    fontWeight: node.type === 'text_art' ? '700' : '400',
   });
 }
 
 function createNodeGroup(node: NodePayload): Group {
-  const group = new Group([createNodeShape(node), createNodeText(node)], {
+  const shape = createNodeShape(node);
+  const text = createNodeText(node);
+  const objects: FabricObject[] = [shape];
+  if (text.text && text.text.trim().length > 0 && !isAbstractVisualNode(node)) {
+    objects.push(text);
+  }
+  const group = new Group(objects, {
     left: node.positionX,
     top: node.positionY,
     angle: node.rotation ?? 0,
@@ -343,14 +386,24 @@ export class FabricRenderer {
         opacity: numberStyle(node.style?.opacity, 1),
       });
     }
-    if (shape instanceof Path && (typeof node.content?.pathData === 'string' || typeof node.style?.path === 'string')) {
-      const pathData = (node.content.pathData as string | undefined) || (node.style.path as string | undefined);
+    if (shape instanceof Path) {
+      let pathData: string | undefined;
+      if (node.type === 'shape' || node.type === 'gradient_shape') {
+        const width = Math.max(80, node.width);
+        const height = Math.max(60, node.height);
+        pathData = `M ${width * 0.5} 0 L ${width} ${height * 0.5} L ${width * 0.5} ${height} L 0 ${height * 0.5} z`;
+      } else if (typeof node.content?.pathData === 'string' || typeof node.style?.path === 'string') {
+        pathData = (node.content.pathData as string | undefined) || (node.style.path as string | undefined);
+      }
+
       if (pathData) {
+        const gradient = gradientFromStyle(node.style ?? {}, Math.max(80, node.width), Math.max(60, node.height));
         shape.set({
           path: new Path(pathData).path,
-          fill: node.style?.backgroundColor ?? DEFAULT_NODE_BG,
+          fill: gradient ?? node.style?.backgroundColor ?? DEFAULT_NODE_BG,
           stroke: node.style?.borderColor ?? DEFAULT_NODE_BORDER,
-          strokeWidth: numberStyle(node.style?.strokeWidth, 1.5),
+          strokeWidth: numberStyle(node.style?.strokeWidth, 1.8),
+          opacity: numberStyle(node.style?.opacity, 1),
         });
       }
     }
@@ -359,9 +412,11 @@ export class FabricRenderer {
       text.set({
         text: nodeText(node),
         width: Math.max(48, node.width - 28),
-        fontSize: numberStyle(node.style?.fontSize, node.type === 'code_block' ? 16 : 20),
-        fontFamily: typeof node.style?.fontFamily === 'string' ? node.style.fontFamily : 'ui-sans-serif',
+        fontSize: numberStyle(node.style?.fontSize, node.type === 'text_art' ? 36 : node.type === 'code_block' ? 16 : 20),
+        fontFamily: typeof node.style?.fontFamily === 'string' ? node.style.fontFamily : node.type === 'text_art' ? 'Georgia, serif' : 'ui-sans-serif',
         fill: typeof node.style?.textColor === 'string' ? node.style.textColor : DEFAULT_TEXT,
+        textAlign: node.type === 'text_art' ? 'center' : 'left',
+        fontWeight: node.type === 'text_art' ? '700' : '400',
       });
     }
 

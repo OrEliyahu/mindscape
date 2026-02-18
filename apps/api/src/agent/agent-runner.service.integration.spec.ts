@@ -29,6 +29,9 @@ describe('AgentRunnerService integration', () => {
     getOpenRequests: jest.fn().mockResolvedValue([]),
     addEntry: jest.fn(),
   };
+  const promptService = {
+    buildSystemPrompt: jest.fn().mockResolvedValue('test-system-prompt'),
+  };
 
   let service: AgentRunnerService;
 
@@ -47,6 +50,7 @@ describe('AgentRunnerService integration', () => {
       broadcast as any,
       sessions as any,
       sharedContext as any,
+      promptService as any,
     );
 
     (service as any).runAgentLoop = jest.fn().mockResolvedValue(undefined);

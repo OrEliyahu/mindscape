@@ -23,7 +23,17 @@ export const CANVAS_TOOLS: ToolDefinition[] = [
       properties: {
         type: {
           type: 'string',
-          enum: ['sticky_note', 'text_block', 'code_block', 'ai_response', 'shape'],
+          enum: [
+            'sticky_note',
+            'text_block',
+            'code_block',
+            'ai_response',
+            'shape',
+            'path',
+            'svg',
+            'gradient_shape',
+            'text_art',
+          ],
           description: 'The type of node to create',
         },
         positionX: { type: 'number', description: 'X position on the canvas (default: 0)' },
@@ -110,6 +120,126 @@ export const CANVAS_TOOLS: ToolDefinition[] = [
       required: ['id'],
       properties: {
         id: { type: 'string', description: 'The UUID of the edge to delete' },
+      },
+    },
+  },
+  {
+    name: 'create_path',
+    description: 'Create a freeform SVG path node for organic lines and custom shapes.',
+    parameters: {
+      type: 'object',
+      required: ['pathData'],
+      properties: {
+        pathData: { type: 'string', description: 'SVG path data using M/L/C/Q commands' },
+        positionX: { type: 'number' },
+        positionY: { type: 'number' },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        content: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            title: { type: 'string' },
+          },
+        },
+        style: {
+          type: 'object',
+          properties: {
+            backgroundColor: { type: 'string' },
+            borderColor: { type: 'string' },
+            strokeWidth: { type: 'number' },
+            opacity: { type: 'number' },
+            path: { type: 'string', description: 'Optional style-level path fallback' },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'create_gradient_shape',
+    description: 'Create a shape node with gradient styling and richer visual effects.',
+    parameters: {
+      type: 'object',
+      properties: {
+        positionX: { type: 'number' },
+        positionY: { type: 'number' },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        content: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            title: { type: 'string' },
+          },
+        },
+        style: {
+          type: 'object',
+          properties: {
+            borderColor: { type: 'string' },
+            borderRadius: { type: 'number' },
+            strokeWidth: { type: 'number' },
+            textColor: { type: 'string' },
+            gradient: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['linear', 'radial'] },
+                angle: { type: 'number' },
+                colorStops: {
+                  type: 'object',
+                  description: 'Record of gradient stops (0 to 1) to colors',
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'create_text_art',
+    description: 'Create expressive text-focused artwork with custom typography and color.',
+    parameters: {
+      type: 'object',
+      required: ['text'],
+      properties: {
+        text: { type: 'string', description: 'Primary text content' },
+        positionX: { type: 'number' },
+        positionY: { type: 'number' },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        style: {
+          type: 'object',
+          properties: {
+            fontFamily: { type: 'string' },
+            fontSize: { type: 'number' },
+            textColor: { type: 'string' },
+            backgroundColor: { type: 'string' },
+            borderRadius: { type: 'number' },
+            opacity: { type: 'number' },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'import_svg',
+    description: 'Create an SVG-backed node from an SVG string produced by the model.',
+    parameters: {
+      type: 'object',
+      required: ['svg'],
+      properties: {
+        svg: { type: 'string', description: 'Raw SVG markup string' },
+        positionX: { type: 'number' },
+        positionY: { type: 'number' },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        style: {
+          type: 'object',
+          properties: {
+            backgroundColor: { type: 'string' },
+            borderColor: { type: 'string' },
+          },
+        },
       },
     },
   },

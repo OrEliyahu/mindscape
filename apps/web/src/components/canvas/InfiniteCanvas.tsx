@@ -1,26 +1,23 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
-import type { ExcalidrawImperativeAPI, AppState } from '@excalidraw/excalidraw/types';
+import type { Canvas } from 'fabric';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { useCanvasSocket } from '@/hooks/use-canvas-socket';
 import ActivityFeed from './ActivityFeed';
+import FabricCanvas from './FabricCanvas';
 import {
   getAgentPersonas,
   getAgentSessions,
   type AgentPersona,
   type AgentSessionSummary,
 } from '@/lib/agent-persona-client';
-import { mapAgentCursorsToCollaborators, mapCanvasToExcalidrawElements } from '@/lib/excalidraw-mapper';
-
-const ExcalidrawView = dynamic(() => import('./ExcalidrawView'), { ssr: false });
+import { FabricRenderer, type RenderedCursor } from '@/lib/fabric-renderer';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const CURSOR_FADE_MS = 3000;
 const AUTO_FOLLOW_COOLDOWN_MS = 10000;
 const AUTO_FOLLOW_DURATION_MS = 2000;
-const NODE_ENTRANCE_MS = 500;
 
 interface CursorState {
   x: number;
@@ -29,13 +26,14 @@ interface CursorState {
 }
 
 export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
-  const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const fabricCanvasRef = useRef<Canvas | null>(null);
+  const rendererRef = useRef(new FabricRenderer());
   const initializedNodesRef = useRef(false);
   const knownNodeIdsRef = useRef<Set<string>>(new Set());
   const lastPanAtRef = useRef(0);
   const isAutoFollowingRef = useRef(false);
   const followAnimationRef = useRef<number | null>(null);
-  const lastScrollRef = useRef<{ x: number; y: number } | null>(null);
+  const lastViewportRef = useRef<{ x: number; y: number } | null>(null);
 
   useCanvasSocket(canvasId);
 
@@ -184,20 +182,23 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
   }, [nodeArray, nodes]);
 
   const animateCameraToNode = useCallback((nodeId: string) => {
-    const api = excalidrawApiRef.current;
+    const canvas = fabricCanvasRef.current;
     const node = nodes.get(nodeId);
-    if (!api || !node) return;
+    if (!canvas || !node) return;
 
     const now = Date.now();
     if (now - lastPanAtRef.current < AUTO_FOLLOW_COOLDOWN_MS) return;
 
-    const appState = api.getAppState();
-    const fromX = appState.scrollX;
-    const fromY = appState.scrollY;
-    const viewportWidth = appState.width || window.innerWidth;
-    const viewportHeight = appState.height || window.innerHeight;
-    const toX = viewportWidth / 2 - (node.positionX + node.width / 2);
-    const toY = viewportHeight / 2 - (node.positionY + node.height / 2);
+    const vt = canvas.viewportTransform;
+    if (!vt) return;
+
+    const zoom = canvas.getZoom() || 1;
+    const fromX = vt[4];
+    const fromY = vt[5];
+    const viewportWidth = canvas.getWidth() || window.innerWidth;
+    const viewportHeight = canvas.getHeight() || window.innerHeight;
+    const toX = viewportWidth / 2 - (node.positionX + node.width / 2) * zoom;
+    const toY = viewportHeight / 2 - (node.positionY + node.height / 2) * zoom;
 
     if (followAnimationRef.current !== null) {
       window.cancelAnimationFrame(followAnimationRef.current);
@@ -210,11 +211,12 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       const elapsed = time - startAt;
       const progress = Math.min(1, elapsed / AUTO_FOLLOW_DURATION_MS);
       const eased = 1 - Math.pow(1 - progress, 3);
-      const scrollX = fromX + (toX - fromX) * eased;
-      const scrollY = fromY + (toY - fromY) * eased;
+      const panX = fromX + (toX - fromX) * eased;
+      const panY = fromY + (toY - fromY) * eased;
 
-      api.updateScene({ appState: { scrollX, scrollY } as never });
-      setViewport({ x: scrollX, y: scrollY, zoom: appState.zoom.value });
+      canvas.setViewportTransform([zoom, 0, 0, zoom, panX, panY]);
+      canvas.requestRenderAll();
+      setViewport({ x: panX, y: panY, zoom });
 
       if (progress < 1) {
         followAnimationRef.current = window.requestAnimationFrame(step);
@@ -261,80 +263,64 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
       if (followAnimationRef.current !== null) {
         window.cancelAnimationFrame(followAnimationRef.current);
       }
+      const canvas = fabricCanvasRef.current;
+      if (canvas) {
+        rendererRef.current.dispose(canvas);
+      }
     };
   }, []);
 
-  const nodeOpacityById = useMemo(() => {
+  const renderedCursors = useMemo(() => {
     const now = Date.now();
-    const opacity = new Map<string, number>();
-
-    for (const node of nodeArray) {
-      const startedAt = nodeEntranceStarts.get(node.id);
-      if (!startedAt) {
-        opacity.set(node.id, 100);
-        continue;
-      }
-      const progress = Math.min(1, (now - startedAt) / NODE_ENTRANCE_MS);
-      opacity.set(node.id, Math.max(0, Math.round(progress * 100)));
-    }
-
-    return opacity;
-  }, [nodeArray, nodeEntranceStarts, tick]);
-
-  const sceneElements = useMemo(
-    () => mapCanvasToExcalidrawElements(nodeArray, edgeArray, nodeOpacityById),
-    [edgeArray, nodeArray, nodeOpacityById],
-  );
-
-  const collaborators = useMemo(() => {
-    const now = Date.now();
-    const cursorEntries = Array.from(interpolatedCursors.entries())
+    return Array.from(interpolatedCursors.entries())
       .map(([sessionId, cursor]) => {
         const age = now - cursor.timestamp;
         if (age > CURSOR_FADE_MS) return null;
 
         const session = sessionById.get(sessionId);
         const persona = session ? personasByKey.get(session.agentName) : undefined;
-
-        return {
+        const cursorData: RenderedCursor = {
           sessionId,
           x: cursor.x,
           y: cursor.y,
-          updatedAt: cursor.timestamp,
-          label: persona?.name ?? session?.agentName ?? 'Agent',
+          label: `${persona?.emoji ?? ''} ${persona?.name ?? session?.agentName ?? 'Agent'}`.trim(),
           color: persona?.color ?? '#64748b',
         };
+        return cursorData;
       })
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-
-    return mapAgentCursorsToCollaborators(cursorEntries);
+      .filter((entry): entry is RenderedCursor => entry !== null);
   }, [interpolatedCursors, personasByKey, sessionById, tick]);
 
   useEffect(() => {
-    if (!excalidrawApiRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    rendererRef.current.syncCanvas(canvas, nodeArray, edgeArray, nodeEntranceStarts);
+    rendererRef.current.syncCursors(canvas, renderedCursors);
+    canvas.requestRenderAll();
+  }, [edgeArray, nodeArray, nodeEntranceStarts, renderedCursors]);
 
-    excalidrawApiRef.current.updateScene({
-      elements: sceneElements as never,
-      collaborators,
-    });
-  }, [sceneElements, collaborators]);
+  const handleViewportChange = useCallback(
+    (viewport: { x: number; y: number; zoom: number }) => {
+      const previous = lastViewportRef.current;
+      const changed = !previous || Math.abs(previous.x - viewport.x) > 0.5 || Math.abs(previous.y - viewport.y) > 0.5;
 
-  const handleExcalidrawChange = (appState: AppState) => {
-    const previous = lastScrollRef.current;
-    const changed = !previous || Math.abs(previous.x - appState.scrollX) > 0.5 || Math.abs(previous.y - appState.scrollY) > 0.5;
+      if (!isAutoFollowingRef.current && changed) {
+        lastPanAtRef.current = Date.now();
+      }
 
-    if (!isAutoFollowingRef.current && changed) {
-      lastPanAtRef.current = Date.now();
+      lastViewportRef.current = { x: viewport.x, y: viewport.y };
+      setViewport(viewport);
+    },
+    [setViewport],
+  );
+
+  const handleCanvasReady = useCallback((canvas: Canvas | null) => {
+    const prev = fabricCanvasRef.current;
+    if (prev && prev !== canvas) {
+      rendererRef.current.dispose(prev);
     }
-
-    lastScrollRef.current = { x: appState.scrollX, y: appState.scrollY };
-
-    setViewport({
-      x: appState.scrollX,
-      y: appState.scrollY,
-      zoom: appState.zoom.value,
-    });
-  };
+    fabricCanvasRef.current = canvas;
+  }, []);
 
   return (
     <div
@@ -397,12 +383,7 @@ export default function InfiniteCanvas({ canvasId }: { canvasId: string }) {
         </div>
       ) : null}
 
-      <ExcalidrawView
-        onApi={(api) => {
-          excalidrawApiRef.current = api;
-        }}
-        onSceneChange={handleExcalidrawChange}
-      />
+      <FabricCanvas onCanvasReady={handleCanvasReady} onViewportChange={handleViewportChange} />
 
       <ActivityFeed personas={personas} sessions={sessions} />
     </div>
